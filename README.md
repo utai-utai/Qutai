@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/utai-utai/Qutai/main/assets/logo.png" alt="Qutai" width="380">
+  <img src="logo.png" alt="Qutai" width="380">
 </p>
 
 <p align="center">从零手写的轻量计算 SDK：数值计算、神经网络与量子计算。</p>
