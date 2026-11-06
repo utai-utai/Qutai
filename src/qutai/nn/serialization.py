@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterable
 from math import prod
 from pathlib import Path
 
-from ..backends.device import get_backend
+from ..backends.device import get_backend, transfer
 from ..core.tensor import Tensor
 from ..core.types import LayerLike
 from ..qnn.pqc import PQC
@@ -32,7 +32,7 @@ def describe_model(model: LayerLike[Tensor], model_type: Callable[[Iterable[Laye
     parameters = model.parameters()
     indices = {parameter: index for index, parameter in enumerate(parameters)}
     structure = _describe_layer(model, indices, model_type)
-    records = [{"shape": parameter.shape, "values": parameter.storage.tolist(), "requires_grad": parameter.requires_grad} for parameter in parameters]
+    records = [{"shape": parameter.shape, "values": parameter.storage.tolist(), "requires_grad": parameter.requires_grad, "dtype": parameter.dtype} for parameter in parameters]
     return {"model": structure, "parameters": records}
 
 
@@ -178,6 +178,8 @@ def _restore_layer(structure: dict, parameters: tuple[Tensor, ...], model_type: 
         layer.weight = loaded[0]
         if len(loaded) == 2: layer.bias = loaded[1]
         if isinstance(layer, BatchNorm2d):
+            layer.running_mean = transfer(layer.running_mean, layer.weight.device, layer.weight.dtype)
+            layer.running_var = transfer(layer.running_var, layer.weight.device, layer.weight.dtype)
             previous = normalizations.setdefault(structure["state"], layer)
             if (previous.parameters() != layer.parameters() or previous.eps != layer.eps or previous.momentum != layer.momentum
                     or previous.running_mean != layer.running_mean or previous.running_var != layer.running_var):
@@ -256,7 +258,7 @@ def _decode_parameters(records: list[dict]) -> tuple[Tensor, ...]:
         shape = tuple(record["shape"])
         values = [float(value) for value in record["values"]]
         if any(not isinstance(size, int) or size < 0 for size in shape) or len(values) != prod(shape): raise ValueError("文件中的参数形状与元素数量不一致")
-        parameters.append(Tensor(values, shape=shape, requires_grad=record.get("requires_grad", True)))
+        parameters.append(Tensor(values, shape=shape, requires_grad=record.get("requires_grad", True), dtype=record.get("dtype", "float64")))
     return tuple(parameters)
 
 
@@ -274,5 +276,5 @@ def load_parameters(parameters: Iterable[Tensor], records: list[dict]) -> None:
     loaded = _decode_parameters(records)
     if any(value.shape != parameter.shape for parameter, value in zip(parameters, loaded, strict=True)): raise ValueError("文件中的参数形状与当前模型不一致")
     for parameter, value in zip(parameters, loaded, strict=True):
-        get_backend(parameter.device).copy_into(parameter.storage, value.storage)
+        get_backend(parameter.device).copy_into(parameter.storage, transfer(value.storage, parameter.device, parameter.dtype))
         parameter.zero_grad()

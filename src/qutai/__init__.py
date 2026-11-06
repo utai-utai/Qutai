@@ -5,3 +5,4 @@ from .core.tensor import (
     conv2d, max_pool2d,
 )
 from .core.data import Stream
+from .backends.device import is_available, synchronize

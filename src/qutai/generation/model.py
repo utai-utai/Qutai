@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 
+from ..core.migration import move
 from ..core.tensor import Tensor
 from ..core.types import Data
 from ..nn.dit import DiT
@@ -24,13 +25,17 @@ class Model:
         network, _ = self._components()
         return network(images, times, train=train)
 
+    def to(self, device: str | None = None, *, dtype: str | None = None) -> Model:
+        """原地迁移模型参数、已有梯度与子层的运行统计量。"""
+        return move(self, device, dtype)
+
     def parameters(self) -> tuple[Tensor, ...]:
         return () if self.network is None else self.network.parameters()
 
     def _states(self, count: int, seed: int | None) -> Iterator[Tensor]:
         network, method = self._components()
         if type(count) is not int or count <= 0: raise ValueError("生成图片数量必须是正整数")
-        return method.states(network, (count, *network.image_shape), seed=seed)
+        return method.states(network, (count, *network.image_shape), seed=seed, like=network.parameters()[0])
 
     def sample(self, *, count: int = 1, seed: int | None = None) -> Tensor:
         """只保留最后的生成结果，采样步数由 method 控制。"""

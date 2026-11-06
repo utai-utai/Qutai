@@ -3,6 +3,7 @@ from pathlib import Path
 from random import Random
 
 from ..core.context import set_recording, set_training
+from ..core.migration import move
 from ..core.tensor import Tensor
 from ..core.types import IntegerData, LayerLike
 from ..nn.cache import KVCache
@@ -35,6 +36,10 @@ class Model:
     def layers(self) -> tuple[LayerLike[Tensor], ...]:
         """按实际计算顺序展示字符嵌入和后面的浮点网络。"""
         return () if self.embedding is None else (self.embedding, *self.network.layers)
+
+    def to(self, device: str | None = None, *, dtype: str | None = None) -> Model:
+        """原地迁移模型参数、已有梯度与子层的运行统计量。"""
+        return move(self, device, dtype)
 
     def parameters(self) -> tuple[Tensor, ...]:
         """参数收集与去重复用神经网络容器，SGD 可以直接接收本模型。"""

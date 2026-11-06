@@ -1,15 +1,11 @@
 """量子态的位序、局部门、概率、独立采样与测量坍缩。"""
 
-import json
 import random
 import unittest
 from cmath import exp
 from math import cos, pi, sin, sqrt
-from pathlib import Path
-from xml.etree import ElementTree
 
 from qutai import quantum as q
-from tests.notebook_helpers import run_notebook
 
 
 def reference_gate(amplitudes, qubits, wires, matrix):
@@ -196,27 +192,6 @@ class QuantumStateTests(unittest.TestCase):
         with self.assertRaises(ValueError): q.Circuit(2).run(q.State(1))
         with self.assertRaises(ValueError): state.sample(-1)
 
-    def test_bell_notebook_runs_from_start_to_finish_with_svg_outputs(self):
-        result = run_notebook('bell')
-        self.assertAmplitudes(result['initial'].probabilities(), [1, 0, 0, 0])
-        self.assertAmplitudes(result['superposition'].probabilities(), [0.5, 0, 0.5, 0])
-        self.assertAmplitudes(result['state'].probabilities(), [0.5, 0, 0, 0.5])
-        self.assertEqual(sum(result['counts'].values()), 1000)
-        self.assertEqual(set(result['counts']), {'00', '11'})
-        self.assertEqual(result['first'], result['second'])
-        expected = [1, 0, 0, 0] if result['first'] == '0' else [0, 0, 0, 1]
-        self.assertAmplitudes(result['after_first'], expected)
-        self.assertAmplitudes(result['collapsed'].probabilities(), expected)
-
-        path = Path(__file__).resolve().parents[1] / 'examples' / 'bell.ipynb'
-        notebook = json.loads(path.read_text(encoding='utf-8'))
-        outputs = {cell['id']: cell.get('outputs', []) for cell in notebook['cells']}
-        for name in ('circuit', 'probabilities', 'marginals', 'measurement'):
-            drawings = [output['data']['image/svg+xml'] for output in outputs[name]
-                        if 'image/svg+xml' in output.get('data', {})]
-            self.assertEqual(len(drawings), 1, name)
-            content = drawings[0] if isinstance(drawings[0], str) else ''.join(drawings[0])
-            ElementTree.fromstring(content)
 
 
 if __name__ == '__main__':

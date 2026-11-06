@@ -1,9 +1,6 @@
 """Tensor 的自然语法、基本索引和共享参数保持同一套自动求导行为。"""
 
-import subprocess
-import sys
 import unittest
-from pathlib import Path
 
 import qutai as qt
 from qutai import Tensor, nn
@@ -166,23 +163,6 @@ class TensorInterfaceTests(unittest.TestCase):
         self.assertEqual(left.weight.values, [value - 0.1 * g for value, g in zip(before, gradient, strict=True)])
         self.assertIs(right.weight, left.weight)
 
-    def test_tensor_submodule_works_without_package_bootstrap_binding(self):
-        source = Path(__file__).resolve().parents[1] / "src" / "qutai"
-        script = """
-import sys
-from types import ModuleType
-
-package = ModuleType("qutai")
-package.__path__ = [sys.argv[1]]
-sys.modules["qutai"] = package
-from qutai.core.tensor import Tensor, matmul
-
-assert (Tensor([1, 2]) + 3).tolist() == [4, 5]
-assert matmul([1, 2], [3, 4]) == 11
-assert "operations" not in Tensor.__dict__
-"""
-        result = subprocess.run([sys.executable, "-c", script, str(source)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

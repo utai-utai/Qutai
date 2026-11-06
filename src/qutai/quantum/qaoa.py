@@ -4,6 +4,7 @@ from random import Random
 from typing import cast
 
 from ..core.tensor import Tensor
+from ..core.migration import move
 from .circuit import Circuit
 from .gates import CNOT, H, RX, RZ, Z
 from .observables import Observable, Operator, as_observable
@@ -44,6 +45,10 @@ class QAOA:
     def cost(self) -> Observable:
         """读取固定成本的副本，避免外部修改导致成本与电路结构不一致。"""
         return self._cost.bind()
+
+    def to(self, device: str | None = None, *, dtype: str | None = None) -> QAOA:
+        """原地迁移可训练角度及其已有梯度。"""
+        return move(self, device, dtype)
 
     def parameters(self) -> tuple[Tensor, ...]:
         """每层一对 gamma、beta，作为同一组参数交给 SGD。"""

@@ -46,7 +46,7 @@ def _adjoint(bra: Storage, *, state: State, gates: tuple[Gate, ...], rotations: 
     backend = get_backend(state.device)
     ket = state.storage.copy()
     positions = {position: index for index, (position, _) in enumerate(rotations)}
-    contributions = [backend.full(1) for _ in rotations]
+    contributions = [backend.full(1, dtype="float32" if state.dtype == "complex64" else "float64") for _ in rotations]
     for position in reversed(range(len(gates))):
         gate = gates[position]
         inverse = gate.adjoint_matrix

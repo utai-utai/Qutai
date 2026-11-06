@@ -25,7 +25,7 @@ class TimeEmbedding(Sequence):
         for time in times:
             angles = [time * 1000 * frequency for frequency in frequencies]
             values.extend(([cos(angle) for angle in angles] + [sin(angle) for angle in angles])[:self.features])
-        return super().__call__(Tensor(values, shape=(len(times), self.features)))
+        return super().__call__(self._input(values).reshape((len(times), self.features)))
 
 
 class DiTBlock(Layer):
@@ -41,8 +41,8 @@ class DiTBlock(Layer):
         self.modulation = Sequence([GELU(), modulation])
 
     def __call__(self, data: Data | Tensor, condition: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
-        condition = condition if isinstance(condition, Tensor) else Tensor(condition)
+        tensor = data if isinstance(data, Tensor) else self._input(data)
+        condition = condition if isinstance(condition, Tensor) else self.modulation._input(condition)
         if tensor.ndim != 3 or condition.shape != (tensor.shape[0], tensor.shape[-1]): raise ValueError("条件块需要三维序列和每个样本对应的特征向量")
         controls = self.modulation(condition).reshape((tensor.shape[0], 6, tensor.shape[-1]))
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = (controls[:, index:index + 1] for index in range(6))
@@ -71,7 +71,7 @@ class DiT(Layer):
         self.output.bias.storage = get_backend(self.output.bias.device).full(self.output.bias.size)
 
     def __call__(self, images: Data | Tensor, times: list[float], *, train: bool = True) -> Tensor:
-        tensor = images if isinstance(images, Tensor) else Tensor(images)
+        tensor = images if isinstance(images, Tensor) else self._input(images)
         if tensor.ndim != 4 or tensor.shape[1:] != self.image_shape: raise ValueError("输入图片形状与 DiT 配置不一致")
         if len(times) != tensor.shape[0]: raise ValueError("每个样本必须对应一个时间")
         with set_recording(train), set_training(train):

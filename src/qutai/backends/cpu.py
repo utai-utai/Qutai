@@ -11,38 +11,42 @@ from .storage import Storage
 
 
 class CPUStorage(Storage):
-    """连续 double 缓冲区；复数按实部、虚部交错保存。"""
+    """连续实数缓冲区；复数按实部、虚部交错保存。"""
     device = "cpu"
 
     def __init__(self, values: Iterable[float | complex] = (), *, dtype: str = "float64") -> None:
-        if dtype not in ("float64", "complex128", "int64"): raise ValueError(f"CPU 尚不支持精度：{dtype}")
+        if dtype not in ("float32", "float64", "complex64", "complex128", "int64"): raise ValueError(f"CPU 尚不支持精度：{dtype}")
         self.dtype = dtype
-        if dtype == "complex128": values = (part for value in values for part in (complex(value).real, complex(value).imag))
-        self.buffer = array("q" if dtype == "int64" else "d", values)
+        if dtype.startswith("complex"): values = (part for value in values for part in (complex(value).real, complex(value).imag))
+        self.buffer = array("q" if dtype == "int64" else "f" if dtype in ("float32", "complex64") else "d", values)
 
     @property
     def size(self) -> int:
-        return len(self.buffer) // (2 if self.dtype == "complex128" else 1)
+        return len(self.buffer) // (2 if self.dtype.startswith("complex") else 1)
+
+    @property
+    def nbytes(self) -> int:
+        return len(self.buffer) * self.buffer.itemsize
 
     def __len__(self) -> int:
         return self.size
 
     def __iter__(self):
-        return iter(self.buffer) if self.dtype != "complex128" else (complex(self.buffer[i], self.buffer[i + 1]) for i in range(0, len(self.buffer), 2))
+        return iter(self.buffer) if not self.dtype.startswith("complex") else (complex(self.buffer[i], self.buffer[i + 1]) for i in range(0, len(self.buffer), 2))
 
     def __getitem__(self, index):
         if isinstance(index, slice):
-            if self.dtype == "complex128": return CPUStorage((self[i] for i in range(*index.indices(self.size))), dtype=self.dtype)
+            if self.dtype.startswith("complex"): return CPUStorage((self[i] for i in range(*index.indices(self.size))), dtype=self.dtype)
             result = CPUStorage(dtype=self.dtype)
             result.buffer = self.buffer[index]
             return result
-        if self.dtype != "complex128": return self.buffer[index]
+        if not self.dtype.startswith("complex"): return self.buffer[index]
         if index < 0: index += self.size
         if not 0 <= index < self.size: raise IndexError("存储索引超出范围")
         return complex(self.buffer[2 * index], self.buffer[2 * index + 1])
 
     def __setitem__(self, index, value) -> None:
-        if self.dtype != "complex128":
+        if not self.dtype.startswith("complex"):
             self.buffer[index] = array(self.buffer.typecode, value) if isinstance(index, slice) else value
         elif isinstance(index, slice):
             values = self.tolist()
@@ -86,7 +90,7 @@ def apply_gate(amplitudes: Storage, qubits: int, wires: tuple[int, ...], matrix:
         mask = 1 << (qubits - 1 - wire)
         selected |= mask
         offsets = [offset | bit for offset in offsets for bit in (0, mask)]
-    result = storage(amplitudes, dtype="complex128")
+    result = storage(amplitudes, dtype=amplitudes.dtype)
     for base in range(len(amplitudes)):
         if base & selected: continue
         block = [amplitudes[base | offset] for offset in offsets]
@@ -104,7 +108,7 @@ def gather(values: Storage, positions: list[int]) -> CPUStorage:
 
 def scatter(values: Storage, positions: list[int], size: int) -> CPUStorage:
     """将梯度累加回原位置，未被选中的位置保持零。"""
-    result = full(size)
+    result = full(size, dtype=getattr(values, "dtype", "float64"))
     for position, value in zip(positions, values, strict=True):
         result[position] += value
     return result
@@ -130,7 +134,7 @@ def broadcast(values: Storage, shape: Shape, target: Shape) -> CPUStorage:
         for position, length, step in zip(coordinate, padded_shape, steps):
             if length != 1: offset += position * step
         result.append(values[offset])
-    return storage(result)
+    return storage(result, dtype=getattr(values, "dtype", "float64"))
 
 
 def matmul(left: Storage, right: Storage, left_shape: Shape, right_shape: Shape,) -> CPUStorage:
@@ -143,7 +147,7 @@ def matmul(left: Storage, right: Storage, left_shape: Shape, right_shape: Shape,
     left_steps, right_steps = strides(left_shape), strides(right_shape)
     rows, inner = left_shape[-2:]
     columns = right_shape[-1]
-    result = full(prod(batches) * rows * columns)
+    result = full(prod(batches) * rows * columns, dtype=getattr(left, "dtype", "float64"))
 
     for batch, coordinate in enumerate(product(*(range(size) for size in batches))):
         left_start = right_start = 0
@@ -164,7 +168,7 @@ def transpose(values: Storage, shape: Shape, axes: tuple[int, ...] | None = None
     axes = transpose_axes(len(shape), axes)
     target_shape = tuple(shape[axis] for axis in axes)
     target_steps = strides(target_shape)
-    result = full(len(values))
+    result = full(len(values), dtype=getattr(values, "dtype", "float64"))
 
     coordinates = product(*(range(size) for size in shape))
     for value, coordinate in zip(values, coordinates, strict=True):
@@ -182,13 +186,13 @@ def sum(values: Storage, shape: Shape | None = None, axis: int | None = None,) -
         total = 0.0
         for value in values:
             total += value
-        return storage([total])
+        return storage([total], dtype=getattr(values, "dtype", "float64"))
     if shape is None: raise ValueError("按轴求和时必须提供数据形状")
 
     axis = normalize_axis(axis, len(shape))
     target_shape = reduced_shape(shape, axis)
     target_steps = strides(target_shape)
-    result = full(prod(target_shape))
+    result = full(prod(target_shape), dtype=getattr(values, "dtype", "float64"))
     coordinates = product(*(range(size) for size in shape))
     for value, coordinate in zip(values, coordinates, strict=True):
         target_coordinate = coordinate[:axis] + coordinate[axis + 1:]
@@ -208,7 +212,7 @@ def mean(values: Storage, shape: Shape | None = None, axis: int | None = None) -
         axis = normalize_axis(axis, len(shape))
         count = shape[axis]
     totals = sum(values, shape, axis=axis)
-    return storage((total / count for total in totals))
+    return storage((total / count for total in totals), dtype=getattr(values, "dtype", "float64"))
 
 
 def unbroadcast(values: Storage, shape: Shape, target: Shape) -> CPUStorage:
@@ -245,7 +249,7 @@ def argmax(values: Storage, shape: Shape, axis: int | None = None) -> list[int]:
 
 def softmax(values: Storage, shape: Shape, axis: int) -> CPUStorage:
     """每组减去最大值后计算 Softmax，避免指数溢出。"""
-    result = full(len(values))
+    result = full(len(values), dtype=getattr(values, "dtype", "float64"))
     for indices in _axis_indices(shape, axis):
         items = [values[index] for index in indices]
         peak = max(items)
@@ -265,7 +269,7 @@ def cross_entropy(values: Storage, shape: Shape, labels: tuple[int, ...]) -> CPU
         peak = max(scores)
         shifted = [score - peak for score in scores]
         losses.append(scalar_log(fsum(scalar_exp(score) for score in shifted)) - shifted[label])
-    return storage([fsum(loss / rows for loss in losses)])
+    return storage([fsum(loss / rows for loss in losses)], dtype=getattr(values, "dtype", "float64"))
 
 
 @lru_cache(maxsize=16)
@@ -307,18 +311,18 @@ def conv2d(values: Storage, weight: Storage, bias: Storage | None, shape: Shape,
                 for kernel_index, source_index in window:
                     total += image[source_index] * kernel[kernel_index]
                 result.append(total)
-    return storage(result)
+    return storage(result, dtype=getattr(values, "dtype", "float64"))
 
 
 def conv2d_backward(gradient: Storage, values: Storage, weight: Storage, shape: Shape, weight_shape: Shape, stride: tuple[int, int], padding: tuple[int, int], *, input_grad: bool = True) -> tuple[CPUStorage, CPUStorage, CPUStorage]:
     """把每个输出梯度乘回输入和卷积核；重叠窗口的贡献相加。"""
     windows = _windows(shape[1:], (weight_shape[2], weight_shape[3]), stride, padding)
     image_size, kernel_size = prod(shape[1:]), prod(weight_shape[1:])
-    input_gradient, weight_gradient, bias_gradient = [], full(len(weight)), full(weight_shape[0])
+    input_gradient, weight_gradient, bias_gradient = [], full(len(weight), dtype=getattr(gradient, "dtype", "float64")), full(weight_shape[0], dtype=getattr(gradient, "dtype", "float64"))
     offset = 0
     for batch in range(shape[0]):
         image = values[batch * image_size:(batch + 1) * image_size]
-        image_gradient = full(image_size)
+        image_gradient = full(image_size, dtype=getattr(gradient, "dtype", "float64"))
         for channel in range(weight_shape[0]):
             start = channel * kernel_size
             kernel = weight[start:start + kernel_size]
@@ -334,7 +338,7 @@ def conv2d_backward(gradient: Storage, values: Storage, weight: Storage, shape: 
                         image_gradient[source_index] += kernel[kernel_index] * incoming
             weight_gradient[start:start + kernel_size] = kernel_gradient
         input_gradient.extend(image_gradient)
-    return storage(input_gradient), weight_gradient, bias_gradient
+    return storage(input_gradient, dtype=getattr(gradient, "dtype", "float64")), weight_gradient, bias_gradient
 
 
 def max_pool2d(values: Storage, shape: Shape, kernel_size: tuple[int, int], stride: tuple[int, int], padding: tuple[int, int]) -> tuple[CPUStorage, CPUStorage]:
@@ -350,12 +354,12 @@ def max_pool2d(values: Storage, shape: Shape, kernel_size: tuple[int, int], stri
                 if values[start + candidate] > values[start + index]: index = candidate
             result.append(values[start + index])
             indices.append(start + index)
-    return storage(result), storage(indices, dtype="int64")
+    return storage(result, dtype=getattr(values, "dtype", "float64")), storage(indices, dtype="int64")
 
 
 def max_pool2d_backward(gradient: Storage, indices: Storage, size: int) -> CPUStorage:
     """梯度回到各窗口选中的位置，同一位置被多次选中时累加。"""
-    result = full(size)
+    result = full(size, dtype=getattr(gradient, "dtype", "float64"))
     for index, incoming in zip(indices, gradient, strict=True):
         result[index] += incoming
     return result
@@ -366,7 +370,7 @@ def channel_stats(values: Storage, shape: Shape) -> tuple[CPUStorage, CPUStorage
     batch, channels, height, width = shape
     area = height * width
     count = batch * area
-    averages, variances = full(channels), full(channels)
+    averages, variances = full(channels, dtype=getattr(values, "dtype", "float64")), full(channels, dtype=getattr(values, "dtype", "float64"))
     for channel in range(channels):
         items = [values[(sample * channels + channel) * area + pixel] for sample in range(batch) for pixel in range(area)]
         average = fsum(items) / count
@@ -380,20 +384,20 @@ def batch_norm2d(values: Storage, weight: Storage, bias: Storage, shape: Shape, 
     channels, height, width = shape[1:]
     area = height * width
     inverse = [(variance + eps) ** -0.5 for variance in variances]
-    normalized, result = full(len(values)), full(len(values))
+    normalized, result = full(len(values), dtype=getattr(values, "dtype", "float64")), full(len(values), dtype=getattr(values, "dtype", "float64"))
     for index, value in enumerate(values):
         channel = index // area % channels
         normalized[index] = (value - averages[channel]) * inverse[channel]
         result[index] = normalized[index] * weight[channel] + bias[channel]
-    return result, normalized, storage(inverse)
+    return result, normalized, storage(inverse, dtype=getattr(values, "dtype", "float64"))
 
 
 def batch_norm2d_backward(gradient: Storage, normalized: Storage, inverse: Storage, weight: Storage, shape: Shape, train: bool) -> tuple[CPUStorage, CPUStorage, CPUStorage]:
     """计算输入、缩放参数、平移参数的梯度；训练时包含均值和方差的导数。"""
     batch, channels, height, width = shape
     area, count = height * width, batch * height * width
-    input_gradient = full(len(gradient))
-    weight_gradient, bias_gradient = full(channels), full(channels)
+    input_gradient = full(len(gradient), dtype=getattr(gradient, "dtype", "float64"))
+    weight_gradient, bias_gradient = full(channels, dtype=getattr(gradient, "dtype", "float64")), full(channels, dtype=getattr(gradient, "dtype", "float64"))
     for index, incoming in enumerate(gradient):
         channel = index // area % channels
         weight_gradient[channel] += incoming * normalized[index]
@@ -418,14 +422,14 @@ def layer_norm(values: Storage, weight: Storage, bias: Storage, width: int, eps:
         normalized.extend(row)
         inverse.append(scale)
         result.extend(value * gamma + beta for value, gamma, beta in zip(row, weight, bias, strict=True))
-    return storage(result), storage(normalized), storage(inverse)
+    return storage(result, dtype=getattr(values, "dtype", "float64")), storage(normalized, dtype=getattr(values, "dtype", "float64")), storage(inverse, dtype=getattr(values, "dtype", "float64"))
 
 
 def layer_norm_backward(gradient: Storage, normalized: Storage, inverse: Storage, weight: Storage) -> tuple[CPUStorage, CPUStorage, CPUStorage]:
     """各组独立传播输入梯度，缩放和平移参数的梯度跨组累加。"""
     width = len(weight)
-    input_gradient = full(len(gradient))
-    weight_gradient, bias_gradient = full(width), full(width)
+    input_gradient = full(len(gradient), dtype=getattr(gradient, "dtype", "float64"))
+    weight_gradient, bias_gradient = full(width, dtype=getattr(gradient, "dtype", "float64")), full(width, dtype=getattr(gradient, "dtype", "float64"))
     for group, scale in enumerate(inverse):
         start = group * width
         weighted = [gradient[start + index] * weight[index] for index in range(width)]
@@ -478,7 +482,7 @@ def relu(values: Storage) -> CPUStorage:
 
 
 def relu_backward(gradient: Storage, values: Storage) -> CPUStorage:
-    return storage((incoming if value > 0 else 0.0 for incoming, value in zip(gradient, values, strict=True)))
+    return storage((incoming if value > 0 else 0.0 for incoming, value in zip(gradient, values, strict=True)), dtype=getattr(gradient, "dtype", "float64"))
 
 
 def gelu(values: Storage) -> CPUStorage:
@@ -487,7 +491,7 @@ def gelu(values: Storage) -> CPUStorage:
 
 def gelu_backward(gradient: Storage, values: Storage) -> CPUStorage:
     return storage((incoming * ((1 + erf(value / sqrt(2))) / 2 + value * scalar_exp(-value * value / 2) / sqrt(2 * pi))
-                    for incoming, value in zip(gradient, values, strict=True)))
+                    for incoming, value in zip(gradient, values, strict=True)), dtype=getattr(gradient, "dtype", "float64"))
 
 
 def exp(values: Storage) -> CPUStorage:
@@ -526,7 +530,7 @@ def sgd_step(values: Storage, gradient: Storage, velocity: Storage | None, *, le
     direction = add(gradient, scale(values, weight_decay)) if weight_decay else gradient
     updated = None
     if momentum:
-        updated = add(scale(velocity, momentum), direction) if velocity is not None else storage(direction)
+        updated = add(scale(velocity, momentum), direction) if velocity is not None else storage(direction, dtype=getattr(values, "dtype", "float64"))
         direction = updated
     return subtract(values, scale(direction, learning_rate)), updated
 
@@ -534,12 +538,12 @@ def sgd_step(values: Storage, gradient: Storage, velocity: Storage | None, *, le
 def adamw_step(values: Storage, gradient: Storage, average: Storage, square_average: Storage, *, step: int, learning_rate: float, betas: tuple[float, float], eps: float, weight_decay: float) -> tuple[CPUStorage, CPUStorage, CPUStorage]:
     """偏差修正后的 Adam 更新；权重衰减独立作用于参数。"""
     beta1, beta2 = betas
-    average = storage((beta1 * old + (1 - beta1) * value for old, value in zip(average, gradient, strict=True)))
-    square_average = storage((beta2 * old + (1 - beta2) * value * value for old, value in zip(square_average, gradient, strict=True)))
+    average = storage((beta1 * old + (1 - beta1) * value for old, value in zip(average, gradient, strict=True)), dtype=getattr(values, "dtype", "float64"))
+    square_average = storage((beta2 * old + (1 - beta2) * value * value for old, value in zip(square_average, gradient, strict=True)), dtype=getattr(values, "dtype", "float64"))
     correction1, correction2 = 1 - beta1 ** step, 1 - beta2 ** step
     decay = 1 - learning_rate * weight_decay
     result = storage((value * decay - learning_rate * (m / correction1) / (sqrt(v / correction2) + eps)
-                      for value, m, v in zip(values, average, square_average, strict=True)))
+                      for value, m, v in zip(values, average, square_average, strict=True)), dtype=getattr(values, "dtype", "float64"))
     return result, average, square_average
 
 
@@ -550,16 +554,16 @@ def _outcome(index: int, qubits: int, wires: tuple[int, ...]) -> int:
     return result
 
 
-def basis_state(qubits: int) -> CPUStorage:
+def basis_state(qubits: int, *, dtype: str = "complex128") -> CPUStorage:
     """创建全零计算基态。"""
-    result = full(2 ** qubits, dtype="complex128")
+    result = full(2 ** qubits, dtype=dtype)
     result[0] = 1
     return result
 
 
 def probabilities(amplitudes: Storage, qubits: int, wires: tuple[int, ...]) -> CPUStorage:
     """将振幅概率累加到指定比特顺序的边缘分布。"""
-    result = full(2 ** len(wires))
+    result = full(2 ** len(wires), dtype="float32" if amplitudes.dtype == "complex64" else "float64")
     for index, amplitude in enumerate(amplitudes): result[_outcome(index, qubits, wires)] += abs(amplitude) ** 2
     return result
 
@@ -567,7 +571,7 @@ def probabilities(amplitudes: Storage, qubits: int, wires: tuple[int, ...]) -> C
 def collapse(amplitudes: Storage, qubits: int, wires: tuple[int, ...], outcome: int, probability: float) -> CPUStorage:
     """保留指定测量结果并归一化，其余振幅归零。"""
     scale = sqrt(probability)
-    return storage((value / scale if _outcome(index, qubits, wires) == outcome else 0j for index, value in enumerate(amplitudes)), dtype="complex128")
+    return storage((value / scale if _outcome(index, qubits, wires) == outcome else 0j for index, value in enumerate(amplitudes)), dtype=amplitudes.dtype)
 
 
 def inner(left: Storage, right: Storage) -> complex:
@@ -579,7 +583,7 @@ def inner(left: Storage, right: Storage) -> complex:
 
 def real_inner(left: Storage, right: Storage, scale: float = 1.0) -> CPUStorage:
     """返回实部内积的单元素存储，反向计算无需读取主机标量。"""
-    return storage([scale * inner(left, right).real])
+    return storage([scale * inner(left, right).real], dtype="float32" if left.dtype in ("float32", "complex64") else "float64")
 
 
 def weighted_sum(values: tuple[Storage, ...], weights: Storage) -> CPUStorage:
@@ -592,4 +596,19 @@ def weighted_sum(values: tuple[Storage, ...], weights: Storage) -> CPUStorage:
 
 def probabilities_backward(gradient: Storage, amplitudes: Storage, qubits: int, wires: tuple[int, ...]) -> CPUStorage:
     """将边缘概率的上游梯度映射回完整振幅。"""
-    return storage((gradient[_outcome(index, qubits, wires)] * value for index, value in enumerate(amplitudes)), dtype="complex128")
+    return storage((gradient[_outcome(index, qubits, wires)] * value for index, value in enumerate(amplitudes)), dtype=amplitudes.dtype)
+
+
+def is_available() -> bool:
+    return True
+
+
+def synchronize() -> None:
+    """CPU 运算同步完成。"""
+    pass
+
+
+def from_storage(values: Storage, *, dtype: str) -> CPUStorage:
+    """导入独立存储；设备间拷贝由目标后端实现。"""
+    if isinstance(values, CPUStorage) and values.dtype == dtype: return values.copy()
+    return storage(values.tolist(), dtype=dtype)

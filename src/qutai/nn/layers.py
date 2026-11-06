@@ -1,9 +1,12 @@
 from collections.abc import Iterable
 from math import prod
 from random import Random
+from typing import Self
 
 from ..backends.device import get_backend
+from ..backends.storage import Storage
 from ..core.context import is_training, set_recording
+from ..core.migration import move
 from ..core.shape import normalize_axis, pair
 from ..core.tensor import Tensor, add, batch_norm2d, conv2d, embedding, gelu, layer_norm, matmul, max_pool2d, mean, relu, reshape, softmax
 from ..core.types import Data, IntegerData, LayerLike
@@ -15,8 +18,23 @@ class Layer:
     def __call__(self, data: Data | Tensor) -> Tensor:
         raise NotImplementedError("层需要实现自己的计算过程")
 
+    def _input(self, data: Data | Tensor) -> Tensor:
+        if isinstance(data, Tensor): return data
+        parameters = self.parameters()
+        reference = parameters[0] if parameters else None
+        return Tensor(data, device=None if reference is None else reference.device,
+                      dtype=None if reference is None else reference.dtype)
+
     def parameters(self) -> tuple[Tensor, ...]:
         return ()
+
+    def to(self, device: str | None = None, *, dtype: str | None = None) -> Self:
+        """原地迁移参数、梯度与运行统计量，保留参数对象；在前向计算前调用。"""
+        return move(self, device, dtype)
+
+    def buffers(self) -> dict[str, Storage]:
+        """需要一起迁移、但不参加参数更新的存储，由具体层显式提供。"""
+        return {}
 
     def __add__(self, other: LayerLike[Tensor]) -> Residual:
         """两边接收同一份输入，再将同形状的输出相加。"""
@@ -29,7 +47,7 @@ class Sequence(Layer):
         self.layers: tuple[LayerLike[Tensor], ...] = tuple(layers)
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         for layer in self.layers:
             tensor = layer(tensor)
         return tensor
@@ -108,7 +126,7 @@ class MaxPool2d(Layer):
         if min(self.padding) < 0: raise ValueError("填充长度不能为负数")
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         return max_pool2d(tensor, self.kernel_size, stride=self.stride, padding=self.padding)
 
 
@@ -118,7 +136,7 @@ class Flatten(Layer):
         self.start_dim = start_dim
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         axis = normalize_axis(self.start_dim, max(len(tensor.shape), 1))
         return reshape(tensor, tensor.shape[:axis] + (prod(tensor.shape[axis:]),))
 
@@ -135,6 +153,9 @@ class BatchNorm2d(Layer):
         self.running_mean = backend.full(num_features)
         self.running_var = backend.full(num_features, 1.0)
 
+    def buffers(self) -> dict[str, Storage]:
+        return {"running_mean": self.running_mean, "running_var": self.running_var}
+
     def __call__(self, data: Data | Tensor) -> Tensor:
         return batch_norm2d(data, self.weight, self.bias, self.running_mean, self.running_var,
                             train=is_training(), momentum=self.momentum, eps=self.eps)
@@ -146,7 +167,7 @@ class BatchNorm2d(Layer):
 class GlobalAvgPool2d(Layer):
     """将每个通道的整张特征图取平均，NCHW 变为 NC。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         if len(tensor.shape) != 4: raise ValueError("全局平均池化需要（批次，通道，高，宽）四维数据")
         return mean(mean(tensor, axis=-1), axis=-1)
 
@@ -154,14 +175,14 @@ class GlobalAvgPool2d(Layer):
 class ReLU(Layer):
     """逐元素保留正数，将其余值置零。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         return relu(tensor)
 
 
 class GELU(Layer):
     """平滑的逐元素激活，使用标准正态分布的精确定义。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         return gelu(tensor)
 
 
@@ -171,7 +192,7 @@ class Mean(Layer):
         self.axis, self.keepdims = axis, keepdims
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         return tensor.mean(axis=self.axis, keepdims=self.keepdims)
 
 
@@ -196,7 +217,7 @@ class Softmax(Layer):
         self.axis = axis
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         return softmax(tensor, self.axis)
 
 
@@ -211,14 +232,14 @@ class Attention(Layer):
 
     def weights(self, data: Data | Tensor) -> Tensor:
         """返回（批次，查询位置，来源位置）的权重，每行和为 1。"""
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         if tensor.ndim != 3: raise ValueError("注意力输入必须为（批次，序列长度，特征数）三维数据")
         queries, keys = self.query(tensor), self.key(tensor)
         scores = queries @ keys.transpose((0, 2, 1)) / queries.shape[-1] ** 0.5
         return softmax(scores, axis=-1)
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         return self.weights(tensor) @ self.value(tensor)
 
     def parameters(self) -> tuple[Tensor, ...]:
@@ -240,7 +261,7 @@ class MultiHeadAttention(Attention):
 
     def weights(self, data: Data | Tensor) -> Tensor:
         """返回（批次，头数，查询位置，来源位置）的注意力权重。"""
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         if tensor.ndim != 3: raise ValueError("注意力输入必须为（批次，序列长度，特征数）三维数据")
         queries, keys = self._split(self.query(tensor)), self._split(self.key(tensor))
         return self._weights(queries, keys)
@@ -259,7 +280,7 @@ class MultiHeadAttention(Attention):
         """普通调用保留反向；传入缓存时只计算当前片段，并暂停建图。"""
         if cache is not None and not self.causal: raise ValueError("KV cache 只支持因果注意力推理")
         with set_recording(cache is None):
-            tensor = data if isinstance(data, Tensor) else Tensor(data)
+            tensor = self._input(data)
             if tensor.ndim != 3: raise ValueError("注意力输入必须为（批次，序列长度，特征数）三维数据")
             queries, keys, values = (self._split(layer(tensor)) for layer in (self.query, self.key, self.value))
             if cache is not None: keys, values = cache.update(keys, values)
@@ -293,7 +314,7 @@ class TransformerBlock(Layer):
     def __call__(self, data: Data | Tensor, *, cache: KVCache | None = None) -> Tensor:
         """缓存只用于推理；归一化、注意力和前馈都只处理当前片段。"""
         with set_recording(cache is None):
-            tensor = data if isinstance(data, Tensor) else Tensor(data)
+            tensor = self._input(data)
             tensor = tensor + self.attention(self.attention_norm(tensor), cache=cache)
             return tensor + self.feed_forward(self.feed_forward_norm(tensor))
 
@@ -308,7 +329,7 @@ class PatchEmbedding(Layer):
         self.projection = Conv2d(in_channels, features, self.patch_size, stride=self.patch_size, seed=seed)
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         if tensor.ndim != 4: raise ValueError("图片输入必须为（批次，通道，高，宽）四维数据")
         if any(size % patch for size, patch in zip(tensor.shape[2:], self.patch_size, strict=True)): raise ValueError("图片高和宽必须能被 patch 尺寸整除")
         projected = self.projection(tensor)
@@ -327,7 +348,7 @@ class PositionEmbedding(Layer):
         self.weight = Tensor([random.gauss(0.0, 0.02) for _ in range(length * features)], shape=(length, features), requires_grad=True)
 
     def __call__(self, data: Data | Tensor, *, offset: int = 0) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         if tensor.ndim != 3 or tensor.shape[-1] != self.weight.shape[-1]: raise ValueError("位置嵌入输入必须为三维数据，且特征数必须匹配")
         if offset < 0 or offset + tensor.shape[1] > self.weight.shape[0]: raise ValueError("输入位置超出位置嵌入的预设长度")
         return tensor + self.weight[offset:offset + tensor.shape[1]]
@@ -343,7 +364,7 @@ class Residual(Layer):
         self.shortcut = shortcut
 
     def __call__(self, data: Data | Tensor) -> Tensor:
-        tensor = data if isinstance(data, Tensor) else Tensor(data)
+        tensor = self._input(data)
         main = self.branch(tensor)
         skip = tensor if self.shortcut is None else self.shortcut(tensor)
         if main.shape != skip.shape: raise ValueError("残差两个分支的输出形状必须相同")

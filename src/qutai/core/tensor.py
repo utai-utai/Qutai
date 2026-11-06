@@ -1,8 +1,9 @@
 from collections.abc import Iterable
+from functools import partial
 from math import prod
 from typing import overload
 
-from ..backends.device import get_backend
+from ..backends.device import get_backend, transfer
 from ..backends.storage import Storage
 from . import grad as autograd
 from . import operations
@@ -15,7 +16,7 @@ class Tensor:
         device = device if device is not None else data.device if isinstance(data, Storage) else "cpu"
         dtype = dtype if dtype is not None else data.dtype if isinstance(data, Storage) else "float64"
         backend = get_backend(device)
-        if dtype != "float64": raise ValueError("实数 Tensor 目前只支持 float64")
+        if dtype not in ("float32", "float64"): raise ValueError("实数 Tensor 只支持 float32 或 float64")
         if isinstance(data, Storage):
             if data.device != device or data.dtype != dtype: raise ValueError("输入存储的设备或精度与 Tensor 不一致")
             self.shape: Shape = (data.size,) if shape is None else shape
@@ -146,6 +147,14 @@ class Tensor:
         if self.size != 1: raise ValueError("只有包含一个元素的值才能取出单个数字")
         return self.storage.tolist()[0]
 
+    def to(self, device: str | None = None, *, dtype: str | None = None, copy: bool = False) -> Tensor:
+        """返回转换后的 Tensor 并保留求导关系；相同配置默认返回自身。"""
+        if dtype is not None and dtype not in ("float32", "float64"): raise ValueError("实数 Tensor 只支持 float32 或 float64")
+        values = transfer(self.storage, device, dtype, copy=copy)
+        if values is self.storage: return self
+        rule = partial(_to_backward, device=self.device, dtype=self.dtype)
+        return autograd.record(Tensor(values, shape=self.shape), (self,), rule)
+
     def zero_grad(self) -> None:
         """清除此前保存的梯度。"""
         self.grad = None
@@ -172,6 +181,10 @@ class Tensor:
 
     def __repr__(self) -> str:
         return f"Tensor({self.tolist()!r})"
+
+
+def _to_backward(gradient: Storage, *, device: str, dtype: str) -> tuple[Storage, ...]:
+    return (transfer(gradient, device, dtype),)
 
 
 def _as_tensor(data: Data | Tensor, like: Tensor | None = None) -> Tensor:
@@ -339,8 +352,8 @@ def batch_norm2d(data: Data | Tensor, weight: Data | Tensor, bias: Data | Tensor
     like = next((item for item in (data, weight, bias) if isinstance(item, Tensor)), None)
     tensor, scale, shift = _as_tensor(data, like), _as_tensor(weight, like), _as_tensor(bias, like)
     backend = get_backend(tensor.device)
-    average = running_mean if isinstance(running_mean, Storage) else backend.storage(running_mean)
-    variance = running_var if isinstance(running_var, Storage) else backend.storage(running_var)
+    average = running_mean if isinstance(running_mean, Storage) else backend.storage(running_mean, dtype=tensor.dtype)
+    variance = running_var if isinstance(running_var, Storage) else backend.storage(running_var, dtype=tensor.dtype)
     computation = operations.batch_norm2d(tensor, scale, shift, average, variance, train=train, momentum=momentum, eps=eps)
     if not isinstance(running_mean, Storage): running_mean[:] = average.tolist()
     if not isinstance(running_var, Storage): running_var[:] = variance.tolist()

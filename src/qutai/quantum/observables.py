@@ -71,7 +71,7 @@ class Observable(Operator):
         """逐项作用于振幅，不构造整个系统的稠密矩阵，也不修改输入。"""
         backend = get_backend(amplitudes.device if isinstance(amplitudes, Storage) else "cpu")
         if not isinstance(amplitudes, Storage): amplitudes = backend.storage(amplitudes, dtype="complex128")
-        result = backend.full(amplitudes.size, 0j, dtype="complex128")
+        result = backend.full(amplitudes.size, 0j, dtype=amplitudes.dtype)
         for coefficient, factors in self.terms:
             values = amplitudes
             for wires, matrix in factors:

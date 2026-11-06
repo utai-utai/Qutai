@@ -10,6 +10,10 @@ class Storage:
     def size(self) -> int:
         raise NotImplementedError
 
+    @property
+    def nbytes(self) -> int:
+        raise NotImplementedError
+
     def copy(self) -> Self:
         raise NotImplementedError
 

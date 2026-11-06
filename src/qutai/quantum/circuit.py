@@ -28,8 +28,8 @@ class Circuit:
     def run(self, state: State | None = None) -> State:
         """默认从全零态开始；传入状态时先复制，不修改原状态。"""
         if state is not None and state.qubits != self.qubits: raise ValueError("输入量子态与电路的量子比特数量必须相同")
-        result = State(self.qubits) if state is None else state.copy()
-        for gate in self.gates: result.apply(gate)
+        result, gates, _, _ = self._snapshot(state)
+        for gate in gates: result.apply(gate)
         return result
 
     def parameters(self) -> tuple[Tensor, ...]:
@@ -39,7 +39,12 @@ class Circuit:
     def _snapshot(self, state: State | None) -> tuple[State, tuple[Gate, ...], tuple[Tensor, ...], tuple[tuple[int, float], ...]]:
         """复制初态和门的数值，同时保留每个 Tensor 角度对应的计算关系。"""
         if state is not None and state.qubits != self.qubits: raise ValueError("输入量子态与电路的量子比特数量必须相同")
-        initial = State(self.qubits) if state is None else state.copy()
+        parameters = self.parameters()
+        if parameters: get_backend(*(parameter.storage for parameter in parameters))
+        initial = (State(self.qubits, device=parameters[0].device, dtype="complex64" if parameters[0].dtype == "float32" else "complex128")
+                   if parameters and state is None else State(self.qubits) if state is None else state.copy())
+        if parameters and (initial.device != parameters[0].device or initial.dtype != ("complex64" if parameters[0].dtype == "float32" else "complex128")):
+            raise ValueError("量子初态的设备和精度必须与旋转角度一致")
         gates, parents, rotations = [], [], []
         for position, gate in enumerate(self.gates):
             angle = gate.angle

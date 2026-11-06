@@ -56,7 +56,7 @@ class StorageTests(unittest.TestCase):
             with self.subTest(device=device), self.assertRaisesRegex(ValueError, "设备"):
                 get_backend(device)
         with self.assertRaisesRegex(ValueError, "精度"):
-            cpu.storage([1], dtype="float32")
+            cpu.storage([1], dtype="float16")
 
     def test_named_elementwise_kernels_produce_storage(self):
         left, right = cpu.storage([2, -3]), cpu.storage([4, 2])

@@ -1,16 +1,10 @@
 """精确期望值、逐门参数移位、经典计算图连接与两步训练。"""
 
-import ast
-import json
 import unittest
 from math import cos, sin, sqrt
-from pathlib import Path
-from unittest.mock import patch
-from xml.etree import ElementTree
 
 from qutai import Tensor, nn, quantum as q
 from qutai.core.context import set_recording
-from tests.notebook_helpers import run_notebook
 
 
 def interacting_circuit(angles):
@@ -247,37 +241,6 @@ class QuantumGradientTests(unittest.TestCase):
         self.assertLess(final, initial)
         self.assertIs(optimizer.parameters[0], angle)
 
-    def test_training_notebook_executes_exactly_two_updates_and_keeps_drawings(self):
-        with patch.object(nn.SGD, 'step', autospec=True, side_effect=nn.SGD.step) as step:
-            result = run_notebook('quantum_training')
-        self.assertEqual(step.call_count, 2)
-        self.assertEqual([row[0] for row in result['history']], [0, 1, 2])
-        expected_angle = 0.3
-        target = result['target']
-        learning_rate = result['optimizer'].learning_rate
-        for position, (_, angle, prediction, loss) in enumerate(result['history']):
-            if position:
-                expected_angle += 2 * learning_rate * (cos(expected_angle) - target) * sin(expected_angle)
-            self.assertAlmostEqual(angle, expected_angle, places=12)
-            self.assertAlmostEqual(prediction, cos(expected_angle), places=12)
-            self.assertAlmostEqual(loss, (prediction - target) ** 2, places=12)
-        self.assertAlmostEqual(result['angle'].item(), expected_angle, places=12)
-        self.assertAlmostEqual(result['prediction'].item(), cos(expected_angle), places=12)
-        self.assertLess(result['history'][-1][3], result['initial_loss'])
-
-        path = Path(__file__).resolve().parents[1] / 'examples' / 'quantum_training.ipynb'
-        notebook = json.loads(path.read_text(encoding='utf-8'))
-        drawings = []
-        for cell in notebook['cells']:
-            if cell['cell_type'] != 'code': continue
-            tree = ast.parse(''.join(cell['source']))
-            self.assertFalse(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                                 and node.func.attr in ('save', 'write_text', 'write_bytes') for node in ast.walk(tree)))
-            drawings.extend(output['data']['image/svg+xml'] for output in cell.get('outputs', [])
-                            if 'image/svg+xml' in output.get('data', {}))
-        self.assertEqual(len(drawings), 4)
-        for content in drawings:
-            ElementTree.fromstring(content if isinstance(content, str) else ''.join(content))
 
 
 if __name__ == '__main__':

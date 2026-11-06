@@ -43,5 +43,5 @@ def backward[T: GradNode](output: T, gradient: Storage) -> dict[T, Storage]:
             continue
         for parent, contribution in zip(tensor.parents, rule(incoming), strict=True):
             if parent.requires_grad:
-                gradients[parent] = (get_backend(incoming.device).add(gradients[parent], contribution) if parent in gradients else contribution)
+                gradients[parent] = (get_backend(contribution.device).add(gradients[parent], contribution) if parent in gradients else contribution)
     return leaves

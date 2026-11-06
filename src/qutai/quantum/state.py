@@ -1,10 +1,11 @@
 from collections import Counter
+from copy import copy as copy_object
 from collections.abc import Iterable
 from math import isclose
 from random import Random
 from typing import Self, overload
 
-from ..backends.device import get_backend
+from ..backends.device import get_backend, transfer
 from ..backends.storage import Storage
 from .gates import Gate
 from .observables import Operator, as_observable, expectation_values
@@ -21,14 +22,17 @@ def selected_wires(qubits: int, wires: int | tuple[int, ...] | None) -> tuple[in
 
 class State:
     """纯量子态；振幅按 |00…0⟩、|00…1⟩……排序，编号 0 为最高位。"""
-    def __init__(self, qubits: int, amplitudes: Iterable[complex] | Storage | None = None, *, device: str = "cpu") -> None:
+    def __init__(self, qubits: int, amplitudes: Iterable[complex] | Storage | None = None, *, device: str | None = None, dtype: str | None = None) -> None:
         if not isinstance(qubits, int) or qubits < 1: raise ValueError("量子比特数量必须是正整数")
         self.qubits = qubits
+        device = device if device is not None else amplitudes.device if isinstance(amplitudes, Storage) else "cpu"
+        dtype = dtype if dtype is not None else amplitudes.dtype if isinstance(amplitudes, Storage) else "complex128"
+        if dtype not in ("complex64", "complex128"): raise ValueError("量子振幅只支持 complex64 或 complex128")
         backend = get_backend(device)
         if isinstance(amplitudes, Storage) and amplitudes.device != device: raise ValueError("输入振幅与目标设备必须相同")
-        self.storage = backend.basis_state(qubits) if amplitudes is None else backend.storage(amplitudes, dtype="complex128")
+        self.storage = backend.basis_state(qubits, dtype=dtype) if amplitudes is None else backend.from_storage(amplitudes, dtype=dtype) if isinstance(amplitudes, Storage) else backend.storage(amplitudes, dtype=dtype)
         if self.storage.size != 2 ** qubits: raise ValueError("振幅数量必须等于 2 的量子比特数量次方")
-        if not isclose(backend.inner(self.storage, self.storage).real, 1.0, rel_tol=1e-10, abs_tol=1e-12):
+        if not isclose(backend.inner(self.storage, self.storage).real, 1.0, rel_tol=1e-6 if dtype == "complex64" else 1e-10, abs_tol=1e-7 if dtype == "complex64" else 1e-12):
             raise ValueError("量子态必须归一化：振幅绝对值的平方和应为 1")
 
     @property
@@ -47,11 +51,20 @@ class State:
 
     @amplitudes.setter
     def amplitudes(self, values: Iterable[complex] | Storage) -> None:
-        self.storage = get_backend(self.device).storage(values, dtype="complex128")
+        self.storage = get_backend(self.device).storage(values, dtype=self.dtype)
+
+    def to(self, device: str | None = None, *, dtype: str | None = None, copy: bool = False) -> State:
+        """转换设备或复数精度；相同配置默认返回自身，不改变原状态。"""
+        if dtype is not None and dtype not in ("complex64", "complex128"): raise ValueError("量子振幅只支持 complex64 或 complex128")
+        values = transfer(self.storage, device, dtype, copy=copy)
+        if values is self.storage: return self
+        result = copy_object(self)
+        result.storage = values
+        return result
 
     def copy(self) -> State:
         """复制状态，后续门操作和测量互不影响。"""
-        return State(self.qubits, self.storage, device=self.device)
+        return self.to(copy=True)
 
     def apply(self, gate: Gate) -> Self:
         """原地执行一个门，只计算局部振幅，不构造完整的大矩阵。"""

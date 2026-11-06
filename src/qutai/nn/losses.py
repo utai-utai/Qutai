@@ -12,8 +12,8 @@ from ..core.types import Data, IntegerData
 class MSE:
     """可重复调用的均方误差；同形状输入，返回平均损失的标量 Tensor。"""
     def __call__(self, prediction: Data | Tensor, target: Data | Tensor) -> Tensor:
-        prediction = prediction if isinstance(prediction, Tensor) else Tensor(prediction)
-        target = target if isinstance(target, Tensor) else Tensor(target)
+        prediction = prediction if isinstance(prediction, Tensor) else Tensor(prediction, device=target.device if isinstance(target, Tensor) else None, dtype=target.dtype if isinstance(target, Tensor) else None)
+        target = target if isinstance(target, Tensor) else Tensor(target, device=prediction.device, dtype=prediction.dtype)
         if prediction.shape != target.shape: raise ValueError(f"预测与目标的形状必须相同，收到 {prediction.shape} 和 {target.shape}")
         return mean(square(subtract(prediction, target)))
 

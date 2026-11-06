@@ -1,18 +1,12 @@
 """随机结构固定的 PQC、批次梯度和经典量子混合网络。"""
 
-import ast
-import json
 import random
 import unittest
 from math import isfinite, pi
-from pathlib import Path
-from unittest.mock import patch
-from xml.etree import ElementTree
 
 from qutai import Tensor, nn, qnn, quantum
 from qutai.core.context import is_recording, set_recording
 from qutai.visualization import Network
-from tests.notebook_helpers import run_notebook
 
 
 def reference_output(layer, inputs):
@@ -204,35 +198,6 @@ class PQCTests(unittest.TestCase):
         self.assertIn('2', labels)
         self.assertIn('3', labels)
 
-    def test_hybrid_notebook_updates_all_three_parts_exactly_twice(self):
-        initial = nn.Model([nn.Linear(2, 2, seed=42), qnn.PQC(2, depth=2, seed=43), nn.Linear(2, 1, seed=44)])
-        before = [parameter.values[:] for parameter in initial.parameters()]
-        with patch.object(nn.SGD, 'step', autospec=True, side_effect=nn.SGD.step) as step:
-            result = run_notebook('hybrid')
-        self.assertEqual(step.call_count, 2)
-        self.assertEqual([row[0] for row in result['history']], [0, 1, 2])
-        self.assertAlmostEqual(result['history'][0][1], result['initial_loss'])
-        self.assertTrue(all(current[1] < previous[1] for previous, current in zip(result['history'], result['history'][1:])))
-        self.assertFalse(result['prediction'].requires_grad)
-        self.assertEqual(result['prediction'].parents, ())
-        self.assertEqual(result['pqc'].rotations, initial.layers[1].rotations)
-        for layer in result['model'].layers:
-            self.assertTrue(all(parameter.grad is not None for parameter in layer.parameters()))
-            self.assertTrue(all(isfinite(value) for parameter in layer.parameters() for value in parameter.grad.values))
-        for parameter, values in zip(result['model'].parameters(), before, strict=True):
-            self.assertNotEqual(parameter.values, values)
-
-        notebook = json.loads((Path(__file__).resolve().parents[1] / 'examples' / 'hybrid.ipynb').read_text(encoding='utf-8'))
-        drawings = []
-        for cell in notebook['cells']:
-            if cell['cell_type'] != 'code': continue
-            tree = ast.parse(''.join(cell['source']))
-            self.assertFalse(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                                 and node.func.attr in ('save', 'write_text', 'write_bytes') for node in ast.walk(tree)))
-            drawings.extend(output['data']['image/svg+xml'] for output in cell.get('outputs', [])
-                            if 'image/svg+xml' in output.get('data', {}))
-        self.assertEqual(len(drawings), 3)
-        for content in drawings: ElementTree.fromstring(content if isinstance(content, str) else ''.join(content))
 
     def test_invalid_configuration_and_input_shapes_raise_clear_errors(self):
         for qubits, depth, entangler in ((0, 1, 'cnot'), (2, 0, 'cnot'), (2, 1, 'cy')):

@@ -2,17 +2,12 @@ import json
 from collections.abc import Iterable
 from math import isfinite
 from pathlib import Path
-from typing import Protocol, Self, runtime_checkable
+from typing import Self
 
-from ..backends.device import get_backend
+from ..backends.device import get_backend, transfer
 from ..backends.storage import Storage
 from ..core.tensor import Tensor
-
-
-@runtime_checkable
-class ParameterSource(Protocol):
-    """能提供参数的对象；自定义对象也无需强制继承 Layer。"""
-    def parameters(self) -> tuple[Tensor, ...]: ...
+from ..core.migration import ParameterSource
 
 
 def _parameters(source: ParameterSource | Iterable[Tensor]) -> tuple[Tensor, ...]:
@@ -39,9 +34,17 @@ def clip_grad_norm(parameters: ParameterSource | Iterable[Tensor], max_norm: flo
 class Optimizer:
     """共用参数收集、清梯度与状态文件；具体更新规则由子类实现。"""
     _settings: tuple[str, ...] = ()
+    _buffers: tuple[str, ...] = ()
 
     def __init__(self, parameters: ParameterSource | Iterable[Tensor]) -> None:
         self.parameters: tuple[Tensor, ...] = _parameters(parameters)
+
+    def to(self) -> Self:
+        """动量和移动平均跟随各自参数的设备与精度，参数对象和计步不变。"""
+        updates = [(state, parameter, transfer(value, parameter.device, parameter.dtype))
+                   for name in self._buffers for state in (getattr(self, name),) for parameter, value in state.items()]
+        for state, parameter, value in updates: state[parameter] = value
+        return self
 
     def zero_grad(self) -> None:
         """清除所有参数此前保存的梯度。"""
@@ -77,6 +80,7 @@ class Optimizer:
 
 
 class SGD(Optimizer):
+    _buffers = ("velocities",)
     _settings = ("learning_rate", "momentum", "weight_decay")
 
     def __init__(self, parameters: ParameterSource | Iterable[Tensor], *, learning_rate: float = 0.1, momentum: float = 0.0, weight_decay: float = 0.0) -> None:
@@ -89,6 +93,7 @@ class SGD(Optimizer):
 
     def step(self) -> None:
         """可选权重衰减和动量，再按梯度下降更新参数。"""
+        self.to()
         for parameter in self.parameters:
             gradient = parameter.grad
             if gradient is None: continue
@@ -110,6 +115,7 @@ class SGD(Optimizer):
 class AdamW(Optimizer):
     """用梯度的一阶、二阶移动平均自适应更新，并独立执行权重衰减。"""
     _settings = ("learning_rate", "betas", "eps", "weight_decay")
+    _buffers = ("averages", "square_averages")
 
     def __init__(self, parameters: ParameterSource | Iterable[Tensor], *, learning_rate: float = 0.001, betas: tuple[float, float] = (0.9, 0.999), eps: float = 1e-8, weight_decay: float = 0.01) -> None:
         super().__init__(parameters)
@@ -123,6 +129,7 @@ class AdamW(Optimizer):
 
     def step(self) -> None:
         """只更新有梯度的参数；每个参数单独计步，移动平均不包含权重衰减。"""
+        self.to()
         for parameter in self.parameters:
             if parameter.grad is None: continue
             backend = get_backend(parameter.storage, parameter.grad.storage)

@@ -75,7 +75,7 @@ class TensorStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "设备"):
             Tensor([1], device="cuda")
         with self.assertRaisesRegex(ValueError, "float64"):
-            Tensor([1], dtype="float32")
+            Tensor([1], dtype="float16")
         with self.assertRaises(ValueError):
             Tensor([1, 2], shape=(3,))
         with self.assertRaises(ValueError):
