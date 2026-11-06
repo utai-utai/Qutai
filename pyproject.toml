@@ -10,5 +10,9 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/utai-utai/Qutai"
+Issues = "https://github.com/utai-utai/Qutai/issues"
+
 [tool.setuptools.packages.find]
 where = ["src"]

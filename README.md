@@ -4,7 +4,7 @@
 
 当前开发环境：Python 3.14。
 
-Notebook 的运行方式与默认训练量见 [示例说明](examples/README.md)。以 `examples` 为工作目录，从上到下运行；各本统一按数据、模型、训练、预测和可视化展开。
+Notebook 的运行方式与默认训练量见 [示例说明](https://github.com/utai-utai/Qutai/blob/main/examples/README.md)。以 `examples` 为工作目录，从上到下运行；各本统一按数据、模型、训练、预测和可视化展开。
 
 ## 当前模块
 
@@ -227,7 +227,7 @@ optimizer = nn.AdamW(model).load("optimizer.json")
 
 在 PyCharm 打开 `examples/classification.ipynb`，选择项目的 Python 3.14 环境，再从上到下运行单元格。实验使用 [UCI Iris 数据集](https://archive.ics.uci.edu/dataset/53/iris)：150 朵鸢尾花，每朵记录萼片长度、萼片宽度、花瓣长度、花瓣宽度，单位均为厘米。类别编号 `0`、`1`、`2` 分别对应 `setosa`、`versicolor`、`virginica`。
 
-数据保存在 `examples/data/iris.csv`，使用标准库 `csv` 读取，运行时无需联网或新增 SDK 依赖。来源、许可和整理方式见 [数据说明](examples/data/README.md)。固定种子 42，每个品种取 40 个训练样本、10 个测试样本，共 120 个训练样本和 30 个测试样本。仅用训练集计算均值和标准差，测试样本与新输入使用同一组统计量进行标准化。
+数据保存在 `examples/data/iris.csv`，使用标准库 `csv` 读取，运行时无需联网或新增 SDK 依赖。来源、许可和整理方式见 [数据说明](https://github.com/utai-utai/Qutai/blob/main/examples/data/README.md)。固定种子 42，每个品种取 40 个训练样本、10 个测试样本，共 120 个训练样本和 30 个测试样本。仅用训练集计算均值和标准差，测试样本与新输入使用同一组统计量进行标准化。
 
 网络为 `Linear(4, 16) → ReLU → Linear(16, 3)`，使用学习率为 0.1 的 SGD 和交叉熵。最后一层输出三个类别的原始得分，训练时直接交给损失对象：
 
@@ -259,7 +259,7 @@ Notebook 展示训练前后的交叉熵、测试准确率，以及四项花朵�
 
 图像形状统一为 `(批次, 通道, 高, 宽)`，即 NCHW。网络采用 ReLU 和最大池化的 LeNet 教学版：`Conv2d(1, 6, 5, padding=2) → ReLU → MaxPool2d(2) → Conv2d(6, 16, 5) → ReLU → MaxPool2d(2) → Flatten → Linear(400, 120) → ReLU → Linear(120, 84) → ReLU → Linear(84, 10)`。训练使用 `nn.CrossEntropy()` 与 `nn.SGD(model, learning_rate=0.1)`，预测类别直接取原始得分的 `argmax`。
 
-MNIST 直接使用官方的原始 IDX 压缩文件，缓存在 `examples/data/mnist/`。`load_mnist()` 已有缓存时直接读取，缺失时自动下载；来源及格式见 [数据说明](examples/data/README.md)。每张图像包含 28×28 个原始像素，数值为 0–255。
+MNIST 直接使用官方的原始 IDX 压缩文件，缓存在 `examples/data/mnist/`。`load_mnist()` 已有缓存时直接读取，缺失时自动下载；来源及格式见 [数据说明](https://github.com/utai-utai/Qutai/blob/main/examples/data/README.md)。每张图像包含 28×28 个原始像素，数值为 0–255。
 
 数据读取与预处理保留在 SDK 外部。`examples/datasets.py` 的 `Images` 集合保存紧凑的像素字节；`images[i]` 只将这一张图片转换为带形状的 Tensor，并除以 255。`Stream` 接收列表或可索引的数据集对象，根据当前批第一条样本的形状组批，并检查同批其余样本形状一致。它负责子集、打乱和分批，文件解析、图片尺寸调整与归一化由外部完成。例如先读取数据，再取一批：
 
@@ -294,7 +294,7 @@ Image(pixels, shape=(3, 32, 32), scale=6)
 
 ## 阶段实验：ResNet 与 CIFAR-10
 
-在 PyCharm 打开 `examples/resnet.ipynb`。数据来自 [CIFAR-10 官方页面](https://cave.cs.toronto.edu/kriz/cifar.html)，直接读取官方 binary 压缩包，保留原始 32×32 RGB 图像。`load_cifar10()` 与 MNIST 的读取接口一致，返回图片集合和标签字节；`images[0].shape` 为 `(3, 32, 32)`，分批时自动获取形状。原始压缩包缓存在 `examples/data/cifar10/`，来源和格式见 [数据说明](examples/data/README.md)。
+在 PyCharm 打开 `examples/resnet.ipynb`。数据来自 [CIFAR-10 官方页面](https://cave.cs.toronto.edu/kriz/cifar.html)，直接读取官方 binary 压缩包，保留原始 32×32 RGB 图像。`load_cifar10()` 与 MNIST 的读取接口一致，返回图片集合和标签字节；`images[0].shape` 为 `(3, 32, 32)`，分批时自动获取形状。原始压缩包缓存在 `examples/data/cifar10/`，来源和格式见 [数据说明](https://github.com/utai-utai/Qutai/blob/main/examples/data/README.md)。
 
 网络采用 CIFAR 版 ResNet-20 的三阶段结构，Notebook 显式列出各阶段的三个 ResNetBlock，第二、第三阶段的第一块设置 `stride=2` 下采样。每块已经包含相加后的 ReLU。通道或尺寸变化时，捷径使用 `1×1 Conv → BatchNorm` 投影，属于投影捷径变体；[原论文 CIFAR 实验](https://arxiv.org/html/1512.03385v1#S4.SS2) 使用的是 Option A 恒等及补零捷径。`nn.GlobalAvgPool2d()` 将 NCHW 特征转换为 `(批次, 通道)`，最后用 Linear 输出十类原始得分。
 
