@@ -159,7 +159,7 @@ class Tensor:
         """清除此前保存的梯度。"""
         self.grad = None
 
-    def backward(self, gradient: Data | Tensor | None = None) -> None:
+    def backward(self, gradient: Data | Tensor | None = None, *, retain_graph: bool = True) -> None:
         """从当前结果反向传播；非单元素结果需要同形状的输出梯度。"""
         if not self.requires_grad:
             raise ValueError("当前 Tensor 未开启梯度记录")
@@ -174,10 +174,13 @@ class Tensor:
             if gradient.device != self.device or gradient.dtype != self.dtype: raise ValueError("输出梯度的设备和精度必须与当前 Tensor 相同")
             seed = gradient.storage
 
-        for tensor, values in autograd.backward(self, seed).items():
+        leaves = autograd.backward(self, seed, retain_graph=retain_graph)
+        owners = {}
+        for values in leaves.values(): owners[id(values)] = owners.get(id(values), 0) + 1
+        for tensor, values in leaves.items():
             if tensor.grad is not None:
                 values = get_backend(tensor.device).add(tensor.grad.storage, values)
-            tensor.grad = Tensor(values.copy(), shape=tensor.shape, device=tensor.device, dtype=tensor.dtype)
+            tensor.grad = Tensor(values.copy() if retain_graph or values is seed or values is tensor.storage or owners.get(id(values), 1) > 1 else values, shape=tensor.shape, device=tensor.device, dtype=tensor.dtype)
 
     def __repr__(self) -> str:
         return f"Tensor({self.tolist()!r})"

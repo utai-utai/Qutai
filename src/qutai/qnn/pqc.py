@@ -8,6 +8,7 @@ from ..core.tensor import Tensor, stack
 from ..core.types import Data
 from ..quantum.circuit import Circuit
 from ..quantum.gates import CNOT, CZ, RX, RY, RZ, Z
+from ..quantum.batch import pqc as batched_pqc
 
 
 _ROTATIONS = {"RX": RX, "RY": RY, "RZ": RZ}
@@ -52,6 +53,7 @@ class PQC:
         if not tensor.shape or tensor.shape[-1] != self.qubits: raise ValueError("输入的最后一维长度必须等于量子比特数量")
         with set_recording(train):
             if tensor.size == 0: return tensor + self.weight.sum() * 0
+            if tensor.device == "cuda": return batched_pqc(tensor, self.weight, self.rotations, self.entangler)
             rows = tensor.reshape((-1, self.qubits))
             outputs = []
             for index in range(len(rows)):

@@ -37,7 +37,11 @@ class Optimizer:
     _buffers: tuple[str, ...] = ()
 
     def __init__(self, parameters: ParameterSource | Iterable[Tensor]) -> None:
-        self.parameters: tuple[Tensor, ...] = _parameters(parameters)
+        if isinstance(parameters, ParameterSource): parameters = parameters.parameters()
+        items = tuple(parameters)
+        self.param_groups = [{**group, "params": _parameters(group["params"])} for group in items] if items and isinstance(items[0], dict) else [{"params": _parameters(items)}]
+        self.parameters = tuple(p for group in self.param_groups for p in group["params"])
+        if len(set(self.parameters)) != len(self.parameters): raise ValueError("同一参数不能出现在多个优化器参数组中")
 
     def to(self) -> Self:
         """动量和移动平均跟随各自参数的设备与精度，参数对象和计步不变。"""
@@ -54,7 +58,8 @@ class Optimizer:
     def save(self, path: str | Path) -> None:
         """保存超参数和每个参数的更新状态；模型数值由 model.save 单独保存。"""
         data = {"type": type(self).__name__, "settings": {name: getattr(self, name) for name in self._settings},
-                "shapes": [parameter.shape for parameter in self.parameters], "state": self._state()}
+                "shapes": [parameter.shape for parameter in self.parameters], "state": self._state(),
+                "groups": [{**{key: value for key, value in group.items() if key != "params"}, "params": [self.parameters.index(p) for p in group["params"]]} for group in self.param_groups]}
         Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def load(self, path: str | Path) -> Self:
@@ -65,7 +70,8 @@ class Optimizer:
             raise ValueError("文件的参数数量或形状与当前优化器不一致")
         if len(data["state"]) != len(self.parameters): raise ValueError("优化器状态数量与参数数量不一致")
         # 先在临时对象完成校验，失败时不改变当前优化器。
-        restored = type(self)(self.parameters, **data["settings"])
+        groups = [{**group, "params": [self.parameters[i] for i in group["params"]]} for group in data.get("groups", [])]
+        restored = type(self)(groups or self.parameters, **data["settings"])
         restored._restore(data["state"])
         self.__dict__.update(restored.__dict__)
         return self
@@ -128,20 +134,23 @@ class AdamW(Optimizer):
         self.square_averages: dict[Tensor, Storage] = {}
 
     def step(self) -> None:
-        """只更新有梯度的参数；每个参数单独计步，移动平均不包含权重衰减。"""
+        """按组更新；CUDA 可原地更新，参数与状态身份保持。"""
         self.to()
-        for parameter in self.parameters:
-            if parameter.grad is None: continue
-            backend = get_backend(parameter.storage, parameter.grad.storage)
-            step = self.steps.get(parameter, 0) + 1
-            previous, squares = self.averages.get(parameter), self.square_averages.get(parameter)
-            if previous is None: previous = backend.full(parameter.size, dtype=parameter.dtype)
-            if squares is None: squares = backend.full(parameter.size, dtype=parameter.dtype)
-            values, average, square_average = backend.adamw_step(parameter.storage, parameter.grad.storage, previous, squares,
-                                                               step=step, learning_rate=self.learning_rate, betas=self.betas,
-                                                               eps=self.eps, weight_decay=self.weight_decay)
-            self.steps[parameter], self.averages[parameter], self.square_averages[parameter] = step, average, square_average
-            parameter.storage = values
+        for group in self.param_groups:
+            settings = {name: group.get(name, getattr(self, name)) for name in self._settings}
+            if settings["learning_rate"] < 0 or settings["eps"] < 0 or settings["weight_decay"] < 0: raise ValueError("优化器参数不能为负数")
+            if len(settings["betas"]) != 2 or any(not 0 <= b < 1 for b in settings["betas"]): raise ValueError("betas 必须在 [0, 1) 内")
+            for parameter in group["params"]:
+                if parameter.grad is None: continue
+                backend = get_backend(parameter.storage, parameter.grad.storage)
+                step = self.steps.get(parameter, 0) + 1
+                previous, squares = self.averages.get(parameter), self.square_averages.get(parameter)
+                if previous is None: previous = backend.full(parameter.size, dtype=parameter.dtype)
+                if squares is None: squares = backend.full(parameter.size, dtype=parameter.dtype)
+                update = getattr(backend, "adamw_step_into", backend.adamw_step)
+                values, average, square_average = update(parameter.storage, parameter.grad.storage, previous, squares, step=step, **settings)
+                self.steps[parameter], self.averages[parameter], self.square_averages[parameter] = step, average, square_average
+                parameter.storage = values
 
     def _state(self) -> list:
         return [None if parameter not in self.steps else
