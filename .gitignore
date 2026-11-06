@@ -1,0 +1,18 @@
+.venv/
+.idea/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.DS_Store
+
+.ipynb_checkpoints/
+
+# Downloaded datasets and generated model files
+/examples/data/mnist/
+/examples/data/cifar10/
+/examples/*.json
+
+# Local scratch script
+/main.py
