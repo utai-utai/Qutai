@@ -5,8 +5,11 @@ from collections.abc import Iterable
 from ctypes import c_uint64, c_longlong, c_float, c_double
 from math import prod
 from pathlib import Path
+from secrets import randbits
 
-from ..core.shape import broadcast_shape, normalize_axis, reduced_shape, strides, transpose_axes
+from .precision import matmul_precision
+
+from ..core.shape import broadcast_shape, normalize_axis, strides, transpose_axes
 from .storage import Storage
 from .cuda_runtime import get_runtime
 
@@ -179,7 +182,7 @@ def scatter(values, positions, size):
 
 
 def broadcast(values, shape, target):
-    if shape == target: return values.copy()
+    if shape == target: return values
     padded = (1,) * (len(target) - len(shape)) + shape
     steps = tuple(0 if length == 1 else step for length, step in zip(padded, strides(padded)))
     meta = storage((*target, *steps), dtype="int64")
@@ -225,6 +228,37 @@ def unbroadcast(values, shape, target):
     return values
 
 
+def memory_stats(): return get_runtime().memory_stats()
+def reset_peak_memory_stats(): get_runtime().reset_peak_memory_stats()
+def empty_cache(): get_runtime().empty_cache()
+
+
+def normal(size, mean=0.0, std=1.0, *, seed=None, dtype="float32"):
+    if dtype not in ("float32", "float64"): raise ValueError("随机初始化只支持实数浮点存储")
+    result = CUDAStorage(size, dtype)
+    seed = randbits(63) if seed is None else int(seed) & ((1 << 63) - 1)
+    _launch("normal_fill", size, _p(result), _i(size), _i(seed), _s(mean,dtype), _s(std,dtype), dtype=dtype, source="gemm.cu")
+    return result
+
+
+def gemm(left, right, rows, inner, cols, *, batch=1, transpose_left=False, transpose_right=False, left_stride=None, right_stride=None):
+    if left.dtype != right.dtype or left.dtype not in ("float32", "float64"): raise ValueError("GEMM 输入精度必须一致")
+    result = CUDAStorage(batch * rows * cols, left.dtype)
+    if not result.size: return result
+    sa = rows * inner if left_stride is None else left_stride
+    sb = inner * cols if right_stride is None else right_stride
+    mixed = left.dtype == "float32" and matmul_precision() == "bfloat16"
+    if mixed and get_runtime().compute_capability < (8, 0): raise RuntimeError("BF16 Tensor Core 需要 SM80 或更新设备")
+    tile = 64 if mixed else 32
+    args = [_p(left), _p(right), _p(result), *(_i(x) for x in (rows,inner,cols,sa,sb,transpose_left,transpose_right))]
+    runtime = get_runtime()
+    runtime.launch(Path(__file__).parent / "kernels/gemm.cu", "gemm_bf16" if mixed else "gemm_tiled", result.size, args,
+                   options=("-DREAL=" + ("float" if left.dtype == "float32" else "double"),),
+                   grid=((cols+tile-1)//tile,(rows+tile-1)//tile,batch), block=(128,1,1) if mixed else (16,16,1))
+    if mixed: runtime.tensor_core_launches += 1
+    return result
+
+
 def matmul(left, right, left_shape, right_shape):
     if left.dtype not in ("float32", "float64"): raise ValueError("CUDA matmul 目前只支持实数浮点存储")
     if len(left_shape) == 1: left_shape = (1, *left_shape)
@@ -232,6 +266,9 @@ def matmul(left, right, left_shape, right_shape):
     batches = broadcast_shape(left_shape[:-2], right_shape[:-2])
     a = (1,) * (len(batches) + 2 - len(left_shape)) + left_shape
     b = (1,) * (len(batches) + 2 - len(right_shape)) + right_shape
+    count = prod(batches)
+    if prod(a[:-2]) in (1, count) and prod(b[:-2]) in (1, count):
+        return gemm(left, right, a[-2], a[-1], b[-1], batch=count, left_stride=0 if prod(a[:-2]) == 1 else None, right_stride=0 if prod(b[:-2]) == 1 else None)
     steps_a, steps_b = strides(a), strides(b)
     meta = storage((*batches, *(0 if a[d] == 1 else steps_a[d] for d in range(len(batches))), *(0 if b[d] == 1 else steps_b[d] for d in range(len(batches)))), dtype="int64")
     rows, inner, columns = a[-2], a[-1], b[-1]
@@ -287,10 +324,11 @@ def global_norm(values):
     norms = []
     for data in values:
         if data.dtype not in ("float32", "float64"): raise ValueError("梯度范数只支持实数浮点存储")
-        output = CUDAStorage(1, "float64")
-        _launch("tensor_norm", 1, _p(data), _p(output), _i(data.size), dtype=data.dtype)
+        blocks = min(4096, max(1, (data.size + 1023) // 1024))
+        output = CUDAStorage(blocks, "float64")
+        _launch("norm_blocks", blocks * 256, _p(data), _p(output), _i(data.size), dtype=data.dtype)
         norms.append(output)
-    combined = concatenate(tuple(norms), tuple((1,) for _ in norms))
+    combined = concatenate(tuple(norms), tuple((value.size,) for value in norms))
     result = CUDAStorage(1, "float64")
     _launch("tensor_norm", 1, _p(combined), _p(result), _i(combined.size), dtype="float64")
     return result.tolist()[0]
@@ -303,6 +341,12 @@ def sgd_step(values, gradient, velocity, *, learning_rate, momentum, weight_deca
         updated = add(scale(velocity, momentum), direction) if velocity is not None else direction.copy()
         direction = updated
     return subtract(values, scale(direction, learning_rate)), updated
+
+
+def adamw_step_into(values, gradient, average, square_average, *, step, learning_rate, betas, eps, weight_decay):
+    beta1, beta2 = betas
+    _launch("adamw", values.size, _p(values), _p(gradient), _p(average), _p(square_average), _p(values), _p(average), _p(square_average), _i(values.size), *(_s(x, values.dtype) for x in (learning_rate, beta1, beta2, 1-beta1**step, 1-beta2**step, eps, weight_decay)), dtype=values.dtype)
+    return values, average, square_average
 
 
 def adamw_step(values, gradient, average, square_average, *, step, learning_rate, betas, eps, weight_decay):

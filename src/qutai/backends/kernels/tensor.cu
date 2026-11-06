@@ -58,8 +58,26 @@ extern "C" __global__ void cross_entropy(const R* a,const I* labels,R* out,I n,I
 extern "C" __global__ void cross_entropy_backward(R* p,const R* g,const I* labels,I rows,I columns) {
     I n=rows*columns; IDX; p[i]=(p[i]-(i%columns==labels[i/columns]?1:0))*g[0]/rows;
 }
+__device__ void norm_merge(double& scale,double& sum,double other,double other_sum) {
+    if(other==0) return;
+    if(scale<other) { double r=scale/other; sum=other_sum+sum*r*r; scale=other; }
+    else { double r=other/scale; sum+=other_sum*r*r; }
+}
+extern "C" __global__ void norm_blocks(const R* a,double* out,I n) {
+    __shared__ double scales[256], sums[256];
+    int t=threadIdx.x; double scale=0, sum=0;
+    for(I j=(I)blockIdx.x*blockDim.x+t;j<n;j+=(I)gridDim.x*blockDim.x) {double x=fabs((double)a[j]); norm_merge(scale,sum,x,1.0);}
+    scales[t]=scale; sums[t]=sum; __syncthreads();
+    for(int d=128;d;d/=2) {if(t<d) norm_merge(scales[t],sums[t],scales[t+d],sums[t+d]); __syncthreads();}
+    if(t==0) out[blockIdx.x]=scales[0]*sqrt(sums[0]);
+}
 extern "C" __global__ void tensor_norm(const R* a,double* out,I n) {
-    if(blockIdx.x||threadIdx.x) return; double total=0; for(I j=0;j<n;j++) {double x=a[j]; total=hypot(total,x);} out[0]=total;
+    __shared__ double scales[256], sums[256];
+    int t=threadIdx.x; double scale=0,sum=0;
+    for(I j=t;j<n;j+=256) norm_merge(scale,sum,fabs((double)a[j]),1.0);
+    scales[t]=scale; sums[t]=sum; __syncthreads();
+    for(int d=128;d;d/=2) {if(t<d) norm_merge(scales[t],sums[t],scales[t+d],sums[t+d]); __syncthreads();}
+    if(t==0) out[0]=scales[0]*sqrt(sums[0]);
 }
 extern "C" __global__ void adamw(const R* a,const R* g,const R* m,const R* v,R* out,R* nm,R* nv,I n,R lr,R b1,R b2,R c1,R c2,R eps,R decay) {
     IDX; R x=g[i], mi=b1*m[i]+(1-b1)*x, vi=b2*v[i]+(1-b2)*x*x; nm[i]=mi; nv[i]=vi;

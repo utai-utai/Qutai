@@ -1,4 +1,4 @@
-"""标准库 ctypes 封装的同步 CUDA Driver / NVRTC 运行时；导入时不加载原生库。"""
+"""标准库 ctypes 封装的单流 CUDA Driver / NVRTC 运行时；导入时不加载原生库。"""
 
 import atexit
 import ctypes
@@ -81,13 +81,21 @@ def _bind(library, name, arguments, result=ctypes.c_int, fallback=None):
 
 
 class Runtime:
-    """单 GPU、同步执行；显存和编译模块由运行时统一回收。"""
+    """单 GPU 默认流；内核异步排队，显式读回时同步。"""
 
     def __init__(self):
         self._lock = threading.RLock()
         self._context = ctypes.c_void_p()
         self._device = ctypes.c_int()
         self._allocations = {}
+        self._blocks = {}
+        self._available = {}
+        self._sources = {}
+        self.allocated_bytes = self.reserved_bytes = 0
+        self.peak_allocated_bytes = self.peak_reserved_bytes = 0
+        self.cache_limit_bytes = 1 << 30
+        self.tensor_core_launches = 0
+        self.debug_sync = os.environ.get("QUTAI_CUDA_SYNC") == "1"
         self._modules = {}
         self._functions = {}
         self._closed = False
@@ -138,7 +146,7 @@ class Runtime:
         self._free = _bind(driver, "cuMemFree_v2", [device_pointer])
         self._upload = _bind(driver, "cuMemcpyHtoD_v2", [device_pointer, pointer, size])
         self._download = _bind(driver, "cuMemcpyDtoH_v2", [pointer, device_pointer, size])
-        self._copy = _bind(driver, "cuMemcpyDtoD_v2", [device_pointer, device_pointer, size])
+        self._copy = _bind(driver, "cuMemcpyDtoDAsync_v2", [device_pointer, device_pointer, size, pointer])
         self._module_load = _bind(driver, "cuModuleLoadDataEx", [address, pointer, unsigned, ctypes.POINTER(integer), address])
         self._module_unload = _bind(driver, "cuModuleUnload", [pointer])
         self._function_get = _bind(driver, "cuModuleGetFunction", [address, pointer, ctypes.c_char_p])
@@ -176,24 +184,58 @@ class Runtime:
         self._check(self._set_current(self._context), "设置当前线程上下文")
 
     def allocate(self, nbytes: int) -> int:
-        if nbytes < 0:
-            raise ValueError("显存字节数不能为负数")
+        if nbytes < 0: raise ValueError("显存字节数不能为负数")
+        if not nbytes: return 0
+        unit = 65536 if nbytes >= 65536 else 512
+        capacity = ((nbytes + unit - 1) // unit) * unit
         with self._lock:
             self._current()
-            if not nbytes:
-                return 0
-            pointer = ctypes.c_uint64()
-            self._check(self._malloc(ctypes.byref(pointer), nbytes), "分配显存")
-            self._allocations[pointer.value] = nbytes
-            return pointer.value
+            pool = self._available.get(capacity, [])
+            if pool:
+                pointer = pool.pop()
+            else:
+                value = ctypes.c_uint64()
+                status = self._malloc(ctypes.byref(value), capacity)
+                if status == 2:  # CUDA_ERROR_OUT_OF_MEMORY：先释放闲置缓存再重试。
+                    self.empty_cache()
+                    status = self._malloc(ctypes.byref(value), capacity)
+                self._check(status, "分配显存")
+                pointer = value.value
+                self._blocks[pointer] = capacity
+                self.reserved_bytes += capacity
+                self.peak_reserved_bytes = max(self.peak_reserved_bytes, self.reserved_bytes)
+            self._allocations[pointer] = nbytes
+            self.allocated_bytes += nbytes
+            self.peak_allocated_bytes = max(self.peak_allocated_bytes, self.allocated_bytes)
+            return pointer
 
     def free(self, ptr: int):
         with self._lock:
-            if self._closed or ptr not in self._allocations:
-                return
+            if self._closed or ptr not in self._allocations: return
+            self.allocated_bytes -= self._allocations.pop(ptr)
+            # 所有后续读写仍在同一默认流，复用排在旧内核之后，不提前物理释放。
+            self._available.setdefault(self._blocks[ptr], []).append(ptr)
+            # 动态专家形状不能把闲置缓存堆到 WDDM 的物理显存预算之外。
+            if self.reserved_bytes - self.allocated_bytes > self.cache_limit_bytes:
+                self.empty_cache()
+
+    def empty_cache(self):
+        with self._lock:
             self._current()
-            self._check(self._free(ptr), "释放显存")
-            del self._allocations[ptr]
+            self._check(self._sync(), "等待闲置显存释放")
+            for pointers in self._available.values():
+                for ptr in pointers:
+                    self._check(self._free(ptr), "释放闲置显存")
+                    self.reserved_bytes -= self._blocks.pop(ptr)
+            self._available.clear()
+
+    def memory_stats(self):
+        return {"allocated_bytes": self.allocated_bytes, "reserved_bytes": self.reserved_bytes,
+                "peak_allocated_bytes": self.peak_allocated_bytes, "peak_reserved_bytes": self.peak_reserved_bytes}
+
+    def reset_peak_memory_stats(self):
+        self.peak_allocated_bytes = self.allocated_bytes
+        self.peak_reserved_bytes = self.reserved_bytes
 
     def _host_buffer(self, buffer):
         view = memoryview(buffer)
@@ -207,15 +249,15 @@ class Runtime:
             self._current()
             if nbytes:
                 self._check(self._upload(ptr, host, nbytes), "上传显存数据")
-                self._check(self._sync(), "等待数据上传")
+
 
     def download(self, ptr: int, buffer):
         host, nbytes = self._host_buffer(buffer)
         with self._lock:
             self._current()
             if nbytes:
-                self._check(self._download(host, ptr, nbytes), "读取显存数据")
                 self._check(self._sync(), "等待数据读取")
+                self._check(self._download(host, ptr, nbytes), "读取显存数据")
 
     def copy(self, dst: int, src: int, nbytes: int):
         if nbytes < 0:
@@ -223,8 +265,8 @@ class Runtime:
         with self._lock:
             self._current()
             if nbytes:
-                self._check(self._copy(dst, src, nbytes), "复制显存数据")
-                self._check(self._sync(), "等待显存复制")
+                self._check(self._copy(dst, src, nbytes, None), "复制显存数据")
+
 
     def synchronize(self):
         with self._lock:
@@ -257,33 +299,35 @@ class Runtime:
         return module
 
     def launch(self, source_file: Path, name: str, size: int, arguments: list,
-               options: tuple[str, ...] = (), block_size: int = 256):
+               options: tuple[str, ...] = (), block_size: int = 256, *, grid=None, block=None, shared_memory=0):
         if size < 0 or not 1 <= block_size <= 1024:
             raise ValueError("内核元素数不能为负数，线程块大小必须在 1 到 1024 之间")
-        if size == 0:
-            return
-        source_file = Path(source_file).resolve()
-        source = source_file.read_bytes()
-        architecture = "".join(map(str, self.compute_capability))
-        settings = ("--std=c++17", f"--gpu-architecture=sm_{architecture}",
-                    f"--include-path={source_file.parent}")
-        settings += tuple(f"--include-path={directory}" for directory in self._includes) + tuple(options)
-        key = (hashlib.sha256(source).digest(), settings)
+        if size == 0: return
+        source_file = Path(source_file)
+        function_key = (source_file, tuple(options), name)
         with self._lock:
             self._current()
-            if key not in self._modules:
-                self._modules[key] = self._compile(source_file, source, settings)
-            module = self._modules[key]
-            function_key = (module.value, name)
             if function_key not in self._functions:
+                if source_file not in self._sources:
+                    source = source_file.read_bytes()
+                    self._sources[source_file] = (source, hashlib.sha256(source).digest())
+                source, digest = self._sources[source_file]
+                architecture = "".join(map(str, self.compute_capability))
+                settings = ("--std=c++17", f"--gpu-architecture=sm_{architecture}", f"--include-path={source_file.parent}")
+                settings += tuple(f"--include-path={directory}" for directory in self._includes) + tuple(options)
+                key = (digest, settings)
+                if key not in self._modules: self._modules[key] = self._compile(source_file, source, settings)
                 function = ctypes.c_void_p()
-                self._check(self._function_get(ctypes.byref(function), module, name.encode("utf8")), f"查找内核 {name}")
+                self._check(self._function_get(ctypes.byref(function), self._modules[key], name.encode("utf8")), f"查找内核 {name}")
                 self._functions[function_key] = function
             parameters = (ctypes.c_void_p * len(arguments))(*(ctypes.addressof(argument) for argument in arguments))
-            self._check(self._launch(self._functions[function_key], (size + block_size - 1) // block_size,
-                                    1, 1, block_size, 1, 1, 0, None, parameters, None), f"启动内核 {name}")
+            grid = grid or ((size + block_size - 1) // block_size, 1, 1)
+            block = block or (block_size, 1, 1)
+            if len(grid) != 3 or len(block) != 3 or any(n <= 0 for n in (*grid,*block)) or block[0]*block[1]*block[2] > 1024:
+                raise ValueError("CUDA 网格和线程块必须是合法的三维正整数")
+            self._check(self._launch(self._functions[function_key], *grid, *block, shared_memory, None, parameters, None), f"启动内核 {name}")
             self.launches += 1
-            self._check(self._sync(), f"等待内核 {name}")
+            if self.debug_sync: self._check(self._sync(), f"等待内核 {name}")
 
     def close(self):
         """退出时尽力回收所有资源；已释放的存储随后调用 free 也安全。"""
@@ -294,13 +338,17 @@ class Runtime:
             if self._context.value:
                 self._set_current(self._context)
                 self._sync()
-                for pointer in self._allocations:
+                for pointer in self._blocks:
                     self._free(pointer)
                 for module in self._modules.values():
                     self._module_unload(module)
                 self._release(self._device)
                 self._context = ctypes.c_void_p()
             self._allocations.clear()
+            self._blocks.clear()
+            self._available.clear()
+            self._sources.clear()
+            self.allocated_bytes = self.reserved_bytes = 0
             self._modules.clear()
             self._functions.clear()
             for directory in self._dll_directories:
