@@ -2,7 +2,8 @@
   <img src="logo.png" alt="Qutai" width="380">
 </p>
 
-<p align="center">从零手写的轻量计算 SDK：数值计算、神经网络与量子计算。</p>
+<big align="center"><strong>从零手写的轻量计算 SDK：数值计算、神经网络与量子计算。</strong></b>
+---
 
 Python 标准库实现，无第三方运行依赖。当前支持 CPU，CUDA 后端后续开发。
 
