@@ -54,7 +54,10 @@ def _describe_layer(layer: LayerLike[Tensor], indices: dict[Tensor, int], model_
             structure.update(type="TimeEmbedding", features=layer.features)
         return structure
     if type(layer) is Identity: return {"type": "Identity"}
-    if type(layer) is Linear: return {"type": "Linear", "in_features": layer.weight.shape[0], "out_features": layer.weight.shape[1], "parameters": [indices[layer.weight], indices[layer.bias]]}
+    if type(layer) is Linear:
+        description = {"type": "Linear", "in_features": layer.weight.shape[0], "out_features": layer.weight.shape[1], "parameters": [indices[p] for p in layer.parameters()]}
+        if layer.bias is None: description["bias"] = False
+        return description
     if type(layer) is PQC:
         return {"type": "PQC", "qubits": layer.qubits, "depth": layer.depth, "entangler": layer.entangler,
                 "rotations": [list(row) for row in layer.rotations], "parameters": [indices[layer.weight]]}
@@ -154,7 +157,7 @@ def _restore_layer(structure: dict, parameters: tuple[Tensor, ...], model_type: 
                 raise ValueError("PQC 的旋转门结构与比特数或深度不一致")
             layer.rotations = rotations
         elif kind == "Linear":
-            layer = Linear(structure["in_features"], structure["out_features"], seed=0)
+            layer = Linear(structure["in_features"], structure["out_features"], bias=structure.get("bias", True), seed=0)
         elif kind == "Conv2d":
             layer = Conv2d(structure["in_channels"], structure["out_channels"], tuple(structure["kernel_size"]), stride=tuple(structure["stride"]), padding=tuple(structure["padding"]), bias=structure["bias"], seed=0)
         elif kind == "LayerNorm":

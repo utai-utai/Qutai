@@ -78,20 +78,21 @@ class Embedding(Layer):
 
 class Linear(Layer):
     """对输入的最后一轴做线性变换，其余批次和序列轴保持不变。"""
-    def __init__(self, in_features: int, out_features: int, *, seed: int | None = None) -> None:
+    def __init__(self, in_features: int, out_features: int, *, bias: bool = True, seed: int | None = None) -> None:
         if in_features <= 0 or out_features <= 0: raise ValueError("输入和输出特征数必须大于零")
         random = Random(seed)
         bound = in_features ** -0.5
         self.weight = Tensor([[random.uniform(-bound, bound) for _ in range(out_features)] for _ in range(in_features)], requires_grad=True)
-        self.bias = Tensor([0.0] * out_features, requires_grad=True)
+        self.bias = Tensor([0.0] * out_features, requires_grad=True) if bias else None
 
     def __call__(self, data: Data | Tensor) -> Tensor:
         """计算 输入 @ 权重 + 偏置，支持向量和任意批次维。"""
-        return add(matmul(data, self.weight), self.bias)
+        result = matmul(data, self.weight)
+        return result if self.bias is None else add(result, self.bias)
 
     def parameters(self) -> tuple[Tensor, ...]:
         """返回权重和偏置的引用，供优化器更新。"""
-        return self.weight, self.bias
+        return (self.weight,) if self.bias is None else (self.weight, self.bias)
 
 
 class Conv2d(Layer):
