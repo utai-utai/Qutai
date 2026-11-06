@@ -1,8 +1,10 @@
 """可从零训练的 Dense/MoE 语言模型；保留教学 lm.Model。"""
 
 from ..core.context import set_recording, set_training
+from ..backends.device import get_backend
 from ..core.migration import move
 from ..core.shape import flatten_indices, infer_shape
+from ..core.tensor import Tensor
 from .config import Config
 from .layers import Block, Projection, RMSNorm, embed, linear, projection_loss, unpack
 from .recompute import checkpoint
@@ -103,8 +105,18 @@ class Decoder:
         auxiliary = []
         for block in self.blocks:
             if train and self.config.activation_checkpointing:
-                packed = checkpoint(block.packed, hidden, parameters=block.parameters())
-                hidden, aux = unpack(packed, hidden.shape)
+                if block.is_moe:
+                    packed = checkpoint(
+                        block.packed, hidden, parameters=block.parameters()
+                    )
+                    hidden, aux = unpack(packed, hidden.shape)
+                else:
+                    hidden = checkpoint(
+                        block.hidden, hidden, parameters=block.parameters()
+                    )
+                    aux = Tensor(
+                        get_backend(hidden.device).full(1, dtype=hidden.dtype), shape=()
+                    )
             else:
                 hidden, aux = block(hidden)
             auxiliary.append(aux)

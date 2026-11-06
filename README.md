@@ -84,7 +84,7 @@ for _ in range(2):
 
 沿用统一 `Tensor(..., device=..., dtype=...)`、`tensor.to(...)` 和 `model.to(...)` 接口。已有 Tensor 输入必须与模型同设备、同精度，例如 `inputs.to("cuda", dtype="float32")`；普通数字或列表沿用模型参数配置。先迁移模型，再建立新的前向图；已有优化器状态会在 `step()` 跟随参数迁移。`tolist()` / `item()`、可视化、模型保存、采样输出是明确的数据读取出口。
 
-CUDA 提供 float32 / float64、complex64 / complex128 和内部 int64 存储；建议先用 float32，量子态对应 complex64。覆盖基础运算、自动求导、CNN、归一化、Transformer / KV cache、生成模型、量子态与可训练量子电路。计算使用自有 `.cu` 内核，无 CPU 计算回退；当前为单 GPU 默认流异步执行，包含自有分块 GEMM 与 BF16 Tensor Core 优化。
+CUDA 提供 float32 / float64、complex64 / complex128、bfloat16 和内部 int64 存储；建议先用 float32，量子态对应 complex64。基础 Tensor 运算与 `to(..., dtype="bfloat16")` 支持真实 2 字节 BF16 存储。CNN、量子模块及旧 `nn` 模块的 BF16 路径尚未全覆盖，继续使用原有 float32 / float64 或复数精度。CUDA 覆盖基础运算、自动求导、CNN、归一化、Transformer / KV cache、生成模型、量子态与可训练量子电路。计算使用自有 `.cu` 内核，无 CPU 计算回退；当前为单 GPU 默认流异步执行，包含自有分块 GEMM 与 BF16 Tensor Core 优化。
 
 首次启动某类内核时，NVRTC 按当前设备的 SM 编译原生 CUBIN，进程内缓存模块；这避免新 Toolkit 的 PTX 版本超过驱动 JIT 支持版本。`CUDA_PATH` / `CUDA_HOME` 可指定 Toolkit；Windows 也检查标准安装目录。发布包携带 `.cu` 源码。
 
@@ -121,7 +121,7 @@ for _ in range(2):
     print(loss.item())
 ```
 
-`lm.autocast()` 当前为 CUDA GEMM 使用自写 BF16 Tensor Core 内核、FP32 累加；参数、激活、梯度与 Adam 状态保留 FP32，Norm、路由 softmax / TopK 和 Loss 使用 FP32；Router 线性投影沿用 BF16 GEMM 策略。它不会把整个模型转换成 BF16。现有 float64 路径仍保留。
+CUDA `lm.Decoder` 在 `lm.autocast()` 下将 QKV、attention、FFN 和输出 head 的激活存为真实 BF16，并使用自写 BF16 Tensor Core GEMM、FP32 累加。模型参数、参数梯度与 Adam 状态保留 FP32；residual hidden、Norm、Router 线性投影及路由计算、Loss 使用 FP32。已有 BF16 GEMM 输入在退出 autocast 后仍使用 Tensor Core，反向不会依赖调用时的上下文。现有默认 float32 / float64 路径仍保留。
 
 CUDA 内核在同一默认 stream 异步排队，显存缓存按同流顺序复用；`tolist()` / `item()` / `synchronize()` 和 checkpoint 读回明确等待完成。`QUTAI_CUDA_SYNC=1` 可用于逐内核调试。`cuda.memory_stats()` 区分当前活动分配和保留缓存，`cuda.empty_cache()` 只释放闲置缓存。闲置缓存预算为 1 GiB，动态形状超过预算后会同步回收，避免 Windows 下保留分配挤占显存。
 

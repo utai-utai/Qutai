@@ -10,8 +10,28 @@ def normal(size, mean=0.0, std=1.0, *, seed=None, dtype="float32"):
     return cpu.storage((random.gauss(mean, std) for _ in range(size)), dtype=dtype)
 
 
-def gemm(a, b, rows, inner, cols, *, transpose_left=False, transpose_right=False):
-    result = cpu.full(rows * cols, dtype=a.dtype)
+def gemm(
+    a,
+    b,
+    rows,
+    inner,
+    cols,
+    *,
+    transpose_left=False,
+    transpose_right=False,
+    out_dtype=None,
+    out=None,
+    accumulate=False,
+):
+    if out_dtype is not None and out_dtype != a.dtype:
+        raise ValueError("CPU GEMM 输出精度必须与输入相同")
+    if accumulate and out is None:
+        raise ValueError("累加 GEMM 需要提供输出存储")
+    result = out if out is not None else cpu.full(rows * cols, dtype=a.dtype)
+    if result.size != rows * cols or result.dtype != a.dtype:
+        raise ValueError("GEMM 输出存储的大小或精度不匹配")
+    if result is a or result is b:
+        raise ValueError("GEMM 输出不能覆盖输入")
     for i in range(rows):
         for j in range(cols):
             value = 0.0
@@ -20,7 +40,7 @@ def gemm(a, b, rows, inner, cols, *, transpose_left=False, transpose_right=False
                     a[k * rows + i if transpose_left else i * inner + k]
                     * b[j * inner + k if transpose_right else k * cols + j]
                 )
-            result[i * cols + j] = value
+            result[i * cols + j] = value + result[i * cols + j] if accumulate else value
     return result
 
 

@@ -14,6 +14,7 @@ type Batch[T] = tuple[T, list[int]] | tuple[list[list[int]], list[list[int]]] | 
 type Result = Nested[float]
 type Indices = Nested[int]
 type Backward = Callable[[Storage], tuple[Storage | None, ...]]
+type GradientSink[T] = Callable[[T, Storage], None]
 type Computation = tuple[Storage, Shape, Backward]
 type Selector = int | slice | EllipsisType | None
 type Index = Selector | tuple[Selector, ...]

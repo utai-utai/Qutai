@@ -1,7 +1,7 @@
 from ..backends.device import get_backend
 from ..backends.storage import Storage
 from .context import is_recording
-from .types import Backward, GradNode
+from .types import Backward, GradNode, GradientSink
 
 
 def record[T: GradNode](result: T, parents: tuple[T, ...], rule: Backward | None = None) -> T:
@@ -31,8 +31,9 @@ def _topological_order[T: GradNode](output: T) -> list[T]:
     return order
 
 
-def backward[T: GradNode](output: T, gradient: Storage, *, retain_graph: bool = True) -> dict[T, Storage]:
-    """沿计算图传播梯度存储，返回各叶子节点的梯度。"""
+def backward[T: GradNode](output: T, gradient: Storage, *, retain_graph: bool = True,
+                          leaf_sink: GradientSink[T] | None = None) -> dict[T, Storage]:
+    """传播梯度；默认返回叶子表，提供 sink 时逐个交出叶子贡献。"""
     order = _topological_order(output)
     gradients = {output: gradient}
     leaves: dict[T, Storage] = {}
@@ -42,7 +43,10 @@ def backward[T: GradNode](output: T, gradient: Storage, *, retain_graph: bool = 
         if incoming is None: continue
         rule = tensor.backward_rule
         if rule is None:
-            leaves[tensor] = incoming
+            if leaf_sink is None:
+                leaves[tensor] = incoming
+            else:
+                leaf_sink(tensor, incoming)
             continue
         contributions = rule(incoming)
         parents = tensor.parents
@@ -52,6 +56,10 @@ def backward[T: GradNode](output: T, gradient: Storage, *, retain_graph: bool = 
             tensor._graph_released = True
         for parent, contribution in zip(parents, contributions, strict=True):
             if parent.requires_grad and contribution is not None:
-                gradients[parent] = (get_backend(contribution.device).add(gradients[parent], contribution) if parent in gradients else contribution)
+                if leaf_sink is not None and parent.backward_rule is None:
+                    leaf_sink(parent, contribution)
+                else:
+                    gradients[parent] = (get_backend(contribution.device).add(gradients[parent], contribution) if parent in gradients else contribution)
         del rule, parents, contributions
+        contribution = None
     return leaves

@@ -11,7 +11,7 @@
 | 单次更新与普通训练循环 | `lm.train_step`、`lm.train`、`lm.cosine_learning_rate` |
 | 二进制训练快照 | `lm.save_checkpoint`、`lm.load_checkpoint`、`lm.checkpoint_metadata` |
 | 激活重计算 | `lm.activation_checkpoint(function, *args, parameters=...)` |
-| BF16 计算、FP32 参数与状态 | `lm.autocast`，或训练函数的 `precision="bfloat16"` |
+| BF16 激活、FP32 参数与梯度/状态 | `lm.autocast`，或训练函数的 `precision="bfloat16"` |
 
 `ByteBPE` 读取无额外归一化和后处理的 ByteLevel BPE `tokenizer.json`。它按文件里的字节词表、合并优先级和 added tokens 编码，不自动插入 BOS/EOS；`decode` 默认跳过特殊 token，保留它们时传 `skip_special_tokens=False`。已有 UtaiLM 32768 词表可直接读取，SDK 不依赖 `tokenizers`。
 
@@ -32,6 +32,10 @@ inputs, labels = next(batches)
 相邻窗口重叠一个边界 token，`inputs` 与 `labels` 都保持原始编号，`Decoder.loss` 内部只做一次 next-token shift。监督标签可用 `-100` 忽略位置。`StatefulBatcher.state_dict()` 保存 epoch、游标、排列和随机状态；默认不重复语料，需要多轮遍历时显式设置 `repeat=True`。
 
 `train_step` 完成清梯度、若干微批前向与反向、范数检查/裁剪和一次优化器更新。不同微批的 LM 损失按有效监督 token 数加权，MoE 辅助损失按微批平均。`train` 只是逐步产生 metrics 的生成器，调用方可在每次完整更新后记录日志或保存快照。
+
+CUDA `Decoder` 的 BF16 模式使用真实 2 字节的 QKV、attention、FFN 和输出 head 激活；GEMM 使用 BF16 Tensor Core 与 FP32 累加。参数、参数梯度和 Adam 状态保持 FP32，residual hidden、Norm、Router 线性投影及路由计算、Loss 也使用 FP32。无需将整个模型 `.to(dtype="bfloat16")`；使用 `lm.autocast()` 或训练入口的 `precision="bfloat16"` 即可。默认 float32 / float64 行为保留，旧教学 `lm.Model` 不承诺同样的 BF16 覆盖。
+
+内部 CUDA GEMM 支持混合 FP32/BF16 输入、显式 `out_dtype`，以及 `out=...` / `accumulate=True` 写入已有缓冲区。输出 head 用它将权重梯度直接累加到 FP32 缓冲区，减少完整词表梯度的中间副本；未指定输出精度时，FP32/BF16 输入默认输出 FP32，float64 输入仍输出 float64。
 
 二进制 checkpoint 保存模型配置、参数与共享关系、已有梯度和运行缓冲区、优化器参数组/计步/状态、Python RNG、显式传入的命名 RNG、数据游标、LR、token 数和训练计数。保存与恢复分块复制 CPU/CUDA 缓冲区，不把整份显存权重导出为 Python 列表。新分片全部落盘后才原子替换 manifest，失败时保留此前完整快照；恢复先验证全部分片哈希和结构，再原地写入现有参数。`checkpoint_metadata(path, verify=True)` 可在分配模型前验证快照。
 

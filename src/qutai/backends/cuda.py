@@ -1,4 +1,4 @@
-"""同步 CUDA 后端；仅在实际使用设备时加载 Driver/NVRTC。"""
+"""单流 CUDA 后端；仅在实际使用设备时加载 Driver/NVRTC。"""
 
 from array import array
 from collections.abc import Iterable
@@ -6,6 +6,7 @@ from ctypes import c_uint64, c_longlong, c_float, c_double
 from math import prod
 from pathlib import Path
 from secrets import randbits
+import struct
 
 from .precision import matmul_precision
 
@@ -14,7 +15,7 @@ from .storage import Storage
 from .cuda_runtime import get_runtime
 
 
-_TYPES = {"float32": ("f", 4), "float64": ("d", 8), "complex64": ("f", 8), "complex128": ("d", 16), "int64": ("q", 8)}
+_TYPES = {"float32": ("f", 4), "float64": ("d", 8), "complex64": ("f", 8), "complex128": ("d", 16), "int64": ("q", 8), "bfloat16": ("H", 2)}
 
 
 class CUDAStorage(Storage):
@@ -53,6 +54,8 @@ class CUDAStorage(Storage):
         parts = 2 if self.dtype.startswith("complex") else 1
         buffer = array(_TYPES[self.dtype][0], [0]) * (self.size * parts)
         self.runtime.download(self.ptr, buffer)
+        if self.dtype == "bfloat16":
+            return [struct.unpack("<f", struct.pack("<I", value << 16))[0] for value in buffer]
         return [complex(buffer[i], buffer[i + 1]) for i in range(0, len(buffer), 2)] if parts == 2 else list(buffer)
 
 
@@ -65,12 +68,15 @@ def _i(value):
 
 
 def _s(value, dtype):
-    return (c_float if dtype in ("float32", "complex64") else c_double)(value)
+    return (c_float if dtype in ("float32", "complex64", "bfloat16") else c_double)(value)
 
 
 def _launch(name, size, *arguments, dtype="float32", source="tensor.cu"):
-    real = "float" if dtype in ("float32", "complex64") else "double"
-    get_runtime().launch(Path(__file__).parent / "kernels" / source, name, size, list(arguments), options=(f"-DREAL={real}",))
+    if dtype == "bfloat16" and source != "tensor.cu":
+        raise ValueError("此算子尚未实现 BF16 存储；请转换为 float32")
+    real = "float" if dtype in ("float32", "complex64", "bfloat16") else "double"
+    options = (f"-DREAL={real}",) + (("-DBFLOAT16=1",) if dtype == "bfloat16" else ())
+    get_runtime().launch(Path(__file__).parent / "kernels" / source, name, size, list(arguments), options=options)
 
 
 def is_available() -> bool:
@@ -90,6 +96,10 @@ def storage(values: Iterable = (), *, dtype="float64"):
     if dtype not in _TYPES: raise ValueError(f"CUDA 尚不支持精度：{dtype}")
     parts = 2 if dtype.startswith("complex") else 1
     if parts == 2: values = (p for x in values for p in (complex(x).real, complex(x).imag))
+    if dtype == "bfloat16":
+        # 主机输入按 round-to-nearest-even 编码；设备间转换由 cast 内核完成。
+        bits = (struct.unpack("<I", struct.pack("<f", value))[0] for value in values)
+        values = ((value >> 16) | 0x40 if value & 0x7FFFFFFF > 0x7F800000 else (value + 0x7FFF + ((value >> 16) & 1)) >> 16 for value in bits)
     buffer = array(_TYPES[dtype][0], values)
     result = CUDAStorage(len(buffer) // parts, dtype)
     result.runtime.upload(result.ptr, buffer)
@@ -119,6 +129,22 @@ def from_storage(values: Storage, *, dtype):
 def copy_into(target, source):
     if (target.device, target.dtype, target.size) != (source.device, source.dtype, source.size): raise ValueError("复制存储的设备、精度与元素数量必须相同")
     target.runtime.copy(target.ptr, source.ptr, target.nbytes)
+
+
+def add_into(target, source):
+    """同形状存储原地累加；每个线程只读写自己的元素。"""
+    if (target.device, target.dtype, target.size) != (source.device, source.dtype, source.size):
+        raise ValueError("累加存储的设备、精度与元素数量必须相同")
+    if target.dtype == "int64": raise ValueError("索引存储不支持梯度累加")
+    count = target.size * (2 if target.dtype.startswith("complex") else 1)
+    _launch("binary", count, _p(target), _p(source), _p(target), _i(count), _i(0), _p(None), dtype=target.dtype)
+
+
+def scale_into(values, factor):
+    """独立元素的原地缩放，供梯度裁剪复用现有存储。"""
+    if values.dtype == "int64": raise ValueError("索引存储不支持数值缩放")
+    count = values.size * (2 if values.dtype.startswith("complex") else 1)
+    _launch("unary", count, _p(values), _p(None), _p(values), _i(count), _i(2), _s(factor, values.dtype), _p(None), dtype=values.dtype)
 
 
 def _unary(values, operation, factor=0.0, gradient=None):
@@ -174,6 +200,8 @@ def gather(values, positions):
 
 def scatter(values, positions, size):
     if values.dtype == "int64": raise ValueError("内部 int64 索引存储不支持梯度累加")
+    if values.dtype == "bfloat16":
+        return from_storage(scatter(from_storage(values, dtype="float32"), positions, size), dtype="bfloat16")
     positions = storage(positions, dtype="int64")
     result = full(size, dtype=values.dtype)
     parts = 2 if values.dtype.startswith("complex") else 1
@@ -202,7 +230,7 @@ def transpose(values, shape, axes=None):
 
 
 def sum(values, shape=None, axis=None):
-    if values.dtype not in ("float32", "float64"): raise ValueError("CUDA sum 目前只支持实数浮点存储")
+    if values.dtype not in ("float32", "float64", "bfloat16"): raise ValueError("CUDA sum 目前只支持实数浮点存储")
     if axis is None:
         outer, width, inner = 1, values.size, 1
     else:
@@ -241,26 +269,59 @@ def normal(size, mean=0.0, std=1.0, *, seed=None, dtype="float32"):
     return result
 
 
-def gemm(left, right, rows, inner, cols, *, batch=1, transpose_left=False, transpose_right=False, left_stride=None, right_stride=None):
-    if left.dtype != right.dtype or left.dtype not in ("float32", "float64"): raise ValueError("GEMM 输入精度必须一致")
-    result = CUDAStorage(batch * rows * cols, left.dtype)
-    if not result.size: return result
+def gemm(left, right, rows, inner, cols, *, batch=1, transpose_left=False, transpose_right=False, left_stride=None, right_stride=None, out_dtype=None, out=None, accumulate=False):
+    """矩阵乘法；BF16 输入使用 FP32 累加，out 可直接承接或累加结果。"""
+    if not isinstance(left, CUDAStorage) or not isinstance(right, CUDAStorage):
+        raise ValueError("GEMM 输入必须是 CUDA 存储")
+    allowed = ("float32", "bfloat16", "float64")
+    if left.dtype not in allowed or right.dtype not in allowed:
+        raise ValueError("GEMM 只支持 float32、bfloat16 和 float64")
+    double = left.dtype == "float64" or right.dtype == "float64"
+    if double and left.dtype != right.dtype:
+        raise ValueError("float64 GEMM 的两个输入必须同精度")
+    dtype = ("float64" if double else "float32") if out_dtype is None else out_dtype
+    if dtype not in (("float64",) if double else ("float32", "bfloat16")):
+        raise ValueError("GEMM 输出精度与输入不兼容")
+    if any(type(x) is not int or x < 0 for x in (rows, inner, cols, batch)):
+        raise ValueError("GEMM 维度必须是非负整数")
     sa = rows * inner if left_stride is None else left_stride
     sb = inner * cols if right_stride is None else right_stride
-    mixed = left.dtype == "float32" and matmul_precision() == "bfloat16"
-    if mixed and get_runtime().compute_capability < (8, 0): raise RuntimeError("BF16 Tensor Core 需要 SM80 或更新设备")
-    tile = 64 if mixed else 32
-    args = [_p(left), _p(right), _p(result), *(_i(x) for x in (rows,inner,cols,sa,sb,transpose_left,transpose_right))]
+    if any(type(x) is not int or x < 0 for x in (sa, sb)):
+        raise ValueError("GEMM batch stride 必须是非负整数")
+    if batch and (left.size < (batch - 1) * sa + rows * inner or right.size < (batch - 1) * sb + inner * cols):
+        raise ValueError("GEMM 输入存储不足")
+    if accumulate and out is None:
+        raise ValueError("GEMM 累加必须指定 out")
+    size = batch * rows * cols
+    if out is not None:
+        if not isinstance(out, CUDAStorage) or out.dtype != dtype or out.size != size:
+            raise ValueError("GEMM out 的设备、精度或大小不匹配")
+        for value in (left, right):
+            if out.nbytes and value.nbytes and out.ptr < value.ptr + value.nbytes and value.ptr < out.ptr + out.nbytes:
+                raise ValueError("GEMM out 不能与输入共享存储")
+    result = out if out is not None else CUDAStorage(size, dtype)
+    if not size:
+        return result
+    mixed = not double and (left.dtype == "bfloat16" or right.dtype == "bfloat16" or matmul_precision() == "bfloat16")
     runtime = get_runtime()
-    runtime.launch(Path(__file__).parent / "kernels/gemm.cu", "gemm_bf16" if mixed else "gemm_tiled", result.size, args,
-                   options=("-DREAL=" + ("float" if left.dtype == "float32" else "double"),),
-                   grid=((cols+tile-1)//tile,(rows+tile-1)//tile,batch), block=(128,1,1) if mixed else (16,16,1))
-    if mixed: runtime.tensor_core_launches += 1
+    if mixed and runtime.compute_capability < (8, 0):
+        raise RuntimeError("BF16 Tensor Core 需要 SM80 或更新设备")
+    options = ["-DREAL=" + ("double" if double else "float")]
+    for macro, value in (("A_BF16", left.dtype), ("B_BF16", right.dtype), ("OUT_BF16", dtype)):
+        if value == "bfloat16":
+            options.append("-D" + macro)
+    tile = 64 if mixed else 32
+    args = [_p(left), _p(right), _p(result), *(_i(x) for x in (rows, inner, cols, sa, sb, transpose_left, transpose_right, accumulate))]
+    runtime.launch(Path(__file__).parent / "kernels/gemm.cu", "gemm_bf16" if mixed else "gemm_tiled", size, args,
+                   options=tuple(options), grid=((cols + tile - 1) // tile, (rows + tile - 1) // tile, batch),
+                   block=(128, 1, 1) if mixed else (16, 16, 1))
+    if mixed:
+        runtime.tensor_core_launches += 1
     return result
 
 
 def matmul(left, right, left_shape, right_shape):
-    if left.dtype not in ("float32", "float64"): raise ValueError("CUDA matmul 目前只支持实数浮点存储")
+    if left.dtype not in ("float32", "float64", "bfloat16"): raise ValueError("CUDA matmul 目前只支持实数浮点存储")
     if len(left_shape) == 1: left_shape = (1, *left_shape)
     if len(right_shape) == 1: right_shape = (*right_shape, 1)
     batches = broadcast_shape(left_shape[:-2], right_shape[:-2])
@@ -268,7 +329,7 @@ def matmul(left, right, left_shape, right_shape):
     b = (1,) * (len(batches) + 2 - len(right_shape)) + right_shape
     count = prod(batches)
     if prod(a[:-2]) in (1, count) and prod(b[:-2]) in (1, count):
-        return gemm(left, right, a[-2], a[-1], b[-1], batch=count, left_stride=0 if prod(a[:-2]) == 1 else None, right_stride=0 if prod(b[:-2]) == 1 else None)
+        return gemm(left, right, a[-2], a[-1], b[-1], batch=count, left_stride=0 if prod(a[:-2]) == 1 else None, right_stride=0 if prod(b[:-2]) == 1 else None, out_dtype=left.dtype)
     steps_a, steps_b = strides(a), strides(b)
     meta = storage((*batches, *(0 if a[d] == 1 else steps_a[d] for d in range(len(batches))), *(0 if b[d] == 1 else steps_b[d] for d in range(len(batches)))), dtype="int64")
     rows, inner, columns = a[-2], a[-1], b[-1]
@@ -292,7 +353,7 @@ def concatenate(values, shapes, axis=0):
 
 
 def argmax(values, shape, axis=None):
-    if values.dtype not in ("float32", "float64"): raise ValueError("CUDA argmax 只支持实数浮点存储")
+    if values.dtype not in ("float32", "float64", "bfloat16"): raise ValueError("CUDA argmax 只支持实数浮点存储")
     if axis is None: outer, width, inner = 1, values.size, 1
     else:
         axis = normalize_axis(axis, len(shape))
@@ -323,7 +384,7 @@ def global_norm(values):
     if not values: return 0.0
     norms = []
     for data in values:
-        if data.dtype not in ("float32", "float64"): raise ValueError("梯度范数只支持实数浮点存储")
+        if data.dtype not in ("float32", "float64", "bfloat16"): raise ValueError("梯度范数只支持实数浮点存储")
         blocks = min(4096, max(1, (data.size + 1023) // 1024))
         output = CUDAStorage(blocks, "float64")
         _launch("norm_blocks", blocks * 256, _p(data), _p(output), _i(data.size), dtype=data.dtype)
@@ -524,6 +585,10 @@ def inner(left, right) -> complex:
 
 
 def real_inner(left, right, scale: float = 1.0):
+    if left.dtype not in ("float32", "float64", "complex64", "complex128"):
+        raise ValueError("量子内积只支持 float32/64 或 complex64/128")
+    if (left.device, left.dtype, left.size) != (right.device, right.dtype, right.size):
+        raise ValueError("内积存储的设备、精度与元素数量必须相同")
     dtype = "float32" if left.dtype in ("float32", "complex64") else "float64"
     result = CUDAStorage(1, dtype)
     components = left.size * (2 if left.dtype.startswith("complex") else 1)

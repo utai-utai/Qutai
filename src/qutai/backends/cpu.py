@@ -512,6 +512,17 @@ def concatenate(values: tuple[Storage, ...], shapes: tuple[Shape, ...], axis: in
     return storage(result, dtype=values[0].dtype)
 
 
+def add_into(target: Storage, source: Storage) -> None:
+    """同配置的逐元素原地累加，供叶子梯度累积使用。"""
+    if (target.device, target.dtype, target.size) != (source.device, source.dtype, source.size):
+        raise ValueError("累加存储的设备、精度与元素数量必须相同")
+    for index in range(target.size): target[index] += source[index]
+
+
+def scale_into(values: Storage, factor: float) -> None:
+    for index in range(values.size): values[index] *= factor
+
+
 def global_norm(values: tuple[Storage, ...]) -> float:
     """计算全部梯度的稳定 L2 范数。"""
     return hypot(*(value for data in values for value in data))

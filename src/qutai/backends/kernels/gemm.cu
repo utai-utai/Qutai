@@ -2,9 +2,37 @@
 #include <mma.h>
 typedef long long I;
 typedef REAL R;
+#ifdef A_BF16
+typedef __nv_bfloat16 AT;
+#else
+typedef R AT;
+#endif
+#ifdef B_BF16
+typedef __nv_bfloat16 BT;
+#else
+typedef R BT;
+#endif
+#ifdef OUT_BF16
+typedef __nv_bfloat16 OT;
+#else
+typedef R OT;
+#endif
+
+template<class T> __device__ R read_value(T x) { return (R)x; }
+template<> __device__ R read_value(__nv_bfloat16 x) { return (R)__bfloat162float(x); }
+template<class T> __device__ __nv_bfloat16 bf16_value(T x) { return __float2bfloat16_rn((float)x); }
+template<> __device__ __nv_bfloat16 bf16_value(__nv_bfloat16 x) { return x; }
+__device__ void store_value(OT* p,R value,I accumulate) {
+    if(accumulate) value+=read_value(*p);
+#ifdef OUT_BF16
+    *p=__float2bfloat16_rn((float)value);
+#else
+    *p=value;
+#endif
+}
 
 // 32x32 输出分块，每线程计算 2x2；只在共享内存中重复使用输入。
-extern "C" __global__ void gemm_tiled(const R* a,const R* b,R* out,I M,I K,I N,I sa,I sb,I ta,I tb) {
+extern "C" __global__ void gemm_tiled(const AT* a,const BT* b,OT* out,I M,I K,I N,I sa,I sb,I ta,I tb,I accumulate) {
     __shared__ R A[32][33], B[32][33];
     int x=threadIdx.x, y=threadIdx.y;
     I row=(I)blockIdx.y*32+y, col=(I)blockIdx.x*32+x, batch=blockIdx.z;
@@ -13,9 +41,9 @@ extern "C" __global__ void gemm_tiled(const R* a,const R* b,R* out,I M,I K,I N,I
     for(I start=0;start<K;start+=32) {
         for(int dy=0;dy<2;dy++) for(int dx=0;dx<2;dx++) {
             I r=(I)blockIdx.y*32+y+dy*16, k=start+x+dx*16;
-            A[y+dy*16][x+dx*16]=(r<M&&k<K)?a[ta?k*M+r:r*K+k]:0;
+            A[y+dy*16][x+dx*16]=(r<M&&k<K)?read_value(a[ta?k*M+r:r*K+k]):0;
             k=start+y+dy*16; I c=(I)blockIdx.x*32+x+dx*16;
-            B[y+dy*16][x+dx*16]=(k<K&&c<N)?b[tb?c*K+k:k*N+c]:0;
+            B[y+dy*16][x+dx*16]=(k<K&&c<N)?read_value(b[tb?c*K+k:k*N+c]):0;
         }
         __syncthreads();
         #pragma unroll
@@ -25,19 +53,22 @@ extern "C" __global__ void gemm_tiled(const R* a,const R* b,R* out,I M,I K,I N,I
         }
         __syncthreads();
     }
-    if(row<M&&col<N) out[row*N+col]=c00;
-    if(row<M&&col+16<N) out[row*N+col+16]=c01;
-    if(row+16<M&&col<N) out[(row+16)*N+col]=c10;
-    if(row+16<M&&col+16<N) out[(row+16)*N+col+16]=c11;
+    if(row<M&&col<N) store_value(out+row*N+col,c00,accumulate);
+    if(row<M&&col+16<N) store_value(out+row*N+col+16,c01,accumulate);
+    if(row+16<M&&col<N) store_value(out+(row+16)*N+col,c10,accumulate);
+    if(row+16<M&&col+16<N) store_value(out+(row+16)*N+col+16,c11,accumulate);
 }
 
 // 四个 warp 覆盖 64x64，每个 warp 保留四个 16x16 FP32 累加片段。
 
 #if __CUDA_ARCH__ >= 800
-extern "C" __global__ void gemm_bf16(const float* a,const float* b,float* out,I M,I K,I N,I sa,I sb,I ta,I tb) {
+extern "C" __global__ void gemm_bf16(const AT* a,const BT* b,OT* out,I M,I K,I N,I sa,I sb,I ta,I tb,I accumulate) {
     using namespace nvcuda;
-    __shared__ __align__(32) __nv_bfloat16 A[64][32], B[32][64];
-    __shared__ __align__(32) float C[64][64];
+    // 输入分块在最后一次屏障后已不再使用，与输出暂存复用同一共享内存。
+    __shared__ __align__(32) unsigned char shared[64*64*sizeof(float)];
+    auto A=reinterpret_cast<__nv_bfloat16 (*)[40]>(shared);
+    auto B=reinterpret_cast<__nv_bfloat16 (*)[72]>(shared+64*40*sizeof(__nv_bfloat16));
+    auto C=reinterpret_cast<float (*)[64]>(shared);
     int tid=threadIdx.x, warp=tid/32, wy=warp/2, wx=warp%2;
     I br=(I)blockIdx.y*64, bc=(I)blockIdx.x*64;
     a+=blockIdx.z*sa; b+=blockIdx.z*sb; out+=blockIdx.z*M*N;
@@ -45,26 +76,28 @@ extern "C" __global__ void gemm_bf16(const float* a,const float* b,float* out,I 
     for(int i=0;i<2;i++) for(int j=0;j<2;j++) wmma::fill_fragment(c[i][j],0.0f);
     for(I start=0;start<K;start+=32) {
         for(int i=tid;i<64*32;i+=128) {
-            I r=br+i/32,k=start+i%32;
-            A[i/32][i%32]=__float2bfloat16_rn((r<M&&k<K)?a[ta?k*M+r:r*K+k]:0.0f);
+            int r=ta?i%64:i/32, k=ta?i/64:i%32;
+            I gr=br+r,gk=start+k;
+            A[r][k]=(gr<M&&gk<K)?bf16_value(a[ta?gk*M+gr:gr*K+gk]):__float2bfloat16_rn(0.0f);
         }
         for(int i=tid;i<32*64;i+=128) {
-            I k=start+i/64,col=bc+i%64;
-            B[i/64][i%64]=__float2bfloat16_rn((k<K&&col<N)?b[tb?col*K+k:k*N+col]:0.0f);
+            int k=tb?i%32:i/64, col=tb?i/32:i%64;
+            I gk=start+k,gc=bc+col;
+            B[k][col]=(gk<K&&gc<N)?bf16_value(b[tb?gc*K+gk:gk*N+gc]):__float2bfloat16_rn(0.0f);
         }
         __syncthreads();
         for(int k=0;k<32;k+=16) {
             wmma::fragment<wmma::matrix_a,16,16,16,__nv_bfloat16,wmma::row_major> aa[2];
             wmma::fragment<wmma::matrix_b,16,16,16,__nv_bfloat16,wmma::row_major> bb[2];
-            for(int i=0;i<2;i++) wmma::load_matrix_sync(aa[i],&A[wy*32+i*16][k],32);
-            for(int j=0;j<2;j++) wmma::load_matrix_sync(bb[j],&B[k][wx*32+j*16],64);
+            for(int i=0;i<2;i++) wmma::load_matrix_sync(aa[i],&A[wy*32+i*16][k],40);
+            for(int j=0;j<2;j++) wmma::load_matrix_sync(bb[j],&B[k][wx*32+j*16],72);
             for(int i=0;i<2;i++) for(int j=0;j<2;j++) wmma::mma_sync(c[i][j],aa[i],bb[j],c[i][j]);
         }
         __syncthreads();
     }
     for(int i=0;i<2;i++) for(int j=0;j<2;j++) wmma::store_matrix_sync(&C[wy*32+i*16][wx*32+j*16],c[i][j],64,wmma::mem_row_major);
     __syncthreads();
-    for(int i=tid;i<64*64;i+=128) if(br+i/64<M&&bc+i%64<N) out[(br+i/64)*N+bc+i%64]=C[i/64][i%64];
+    for(int i=tid;i<64*64;i+=128) if(br+i/64<M&&bc+i%64<N) store_value(out+(br+i/64)*N+bc+i%64,C[i/64][i%64],accumulate);
 }
 
 #endif

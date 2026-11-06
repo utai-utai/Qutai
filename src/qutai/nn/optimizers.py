@@ -27,7 +27,7 @@ def clip_grad_norm(parameters: ParameterSource | Iterable[Tensor], max_norm: flo
     if norm > max_norm:
         scale = max_norm / norm
         for gradient in gradients:
-            backend.copy_into(gradient.storage, backend.scale(gradient.storage, scale))
+            backend.scale_into(gradient.storage, scale)
     return norm
 
 

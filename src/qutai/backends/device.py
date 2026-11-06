@@ -26,11 +26,12 @@ def synchronize(device: str = "cpu") -> None:
 
 
 def transfer(values: Storage, device: str | None = None, dtype: str | None = None, *, copy: bool = False) -> Storage:
-    """同步转换设备或精度；相同配置默认复用，copy=True 强制独立存储。"""
+    """设备迁移同步；同 CUDA 设备的精度转换按流排队，相同配置默认复用。"""
     device = values.device if device is None else device
     dtype = values.dtype if dtype is None else dtype
     backend = get_backend(device)
     if (device, dtype) == (values.device, values.dtype) and not copy: return values
+    if device == values.device == "cuda": return backend.from_storage(values, dtype=dtype)
     get_backend(values.device).synchronize()
     result = backend.from_storage(values, dtype=dtype)
     backend.synchronize()

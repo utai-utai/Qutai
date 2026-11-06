@@ -16,7 +16,8 @@ class Tensor:
         device = device if device is not None else data.device if isinstance(data, Storage) else "cpu"
         dtype = dtype if dtype is not None else data.dtype if isinstance(data, Storage) else "float64"
         backend = get_backend(device)
-        if dtype not in ("float32", "float64"): raise ValueError("实数 Tensor 只支持 float32 或 float64")
+        if dtype not in ("float32", "float64", "bfloat16"): raise ValueError("实数 Tensor 只支持 float32、float64 或 CUDA bfloat16")
+        if dtype == "bfloat16" and device != "cuda": raise ValueError("BF16 Tensor 存储当前只支持 CUDA")
         if isinstance(data, Storage):
             if data.device != device or data.dtype != dtype: raise ValueError("输入存储的设备或精度与 Tensor 不一致")
             self.shape: Shape = (data.size,) if shape is None else shape
@@ -149,7 +150,7 @@ class Tensor:
 
     def to(self, device: str | None = None, *, dtype: str | None = None, copy: bool = False) -> Tensor:
         """返回转换后的 Tensor 并保留求导关系；相同配置默认返回自身。"""
-        if dtype is not None and dtype not in ("float32", "float64"): raise ValueError("实数 Tensor 只支持 float32 或 float64")
+        if dtype is not None and dtype not in ("float32", "float64", "bfloat16"): raise ValueError("实数 Tensor 只支持 float32、float64 或 CUDA bfloat16")
         values = transfer(self.storage, device, dtype, copy=copy)
         if values is self.storage: return self
         rule = partial(_to_backward, device=self.device, dtype=self.dtype)
@@ -174,13 +175,17 @@ class Tensor:
             if gradient.device != self.device or gradient.dtype != self.dtype: raise ValueError("输出梯度的设备和精度必须与当前 Tensor 相同")
             seed = gradient.storage
 
-        leaves = autograd.backward(self, seed, retain_graph=retain_graph)
-        owners = {}
-        for values in leaves.values(): owners[id(values)] = owners.get(id(values), 0) + 1
-        for tensor, values in leaves.items():
-            if tensor.grad is not None:
-                values = get_backend(tensor.device).add(tensor.grad.storage, values)
-            tensor.grad = Tensor(values.copy() if retain_graph or values is seed or values is tensor.storage or owners.get(id(values), 1) > 1 else values, shape=tensor.shape, device=tensor.device, dtype=tensor.dtype)
+        def accumulate(tensor, values):
+            if values.device != tensor.device:
+                raise ValueError("叶子梯度与参数的设备必须一致")
+            if values.dtype != tensor.dtype:
+                values = transfer(values, tensor.device, tensor.dtype)
+            # 只保留当前叶子的合并临时；新存储也隔离图内/图外共享的旧 grad。
+            values = (get_backend(tensor.device).add(tensor.grad.storage, values)
+                      if tensor.grad is not None else values.copy())
+            tensor.grad = Tensor(values, shape=tensor.shape)
+
+        autograd.backward(self, seed, retain_graph=retain_graph, leaf_sink=accumulate)
 
     def __repr__(self) -> str:
         return f"Tensor({self.tolist()!r})"

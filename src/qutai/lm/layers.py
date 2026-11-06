@@ -17,24 +17,53 @@ def backend(value):
     raise ValueError("此设备尚未实现大型语言模型内核")
 
 
+def activation_dtype(x, weight):
+    """BF16 只保存 CUDA 激活；模型参数和其梯度继续使用原精度。"""
+    if (
+        x.device == "cuda"
+        and weight.dtype == "float32"
+        and (matmul_precision() == "bfloat16" or x.dtype == "bfloat16")
+    ):
+        return "bfloat16"
+    return weight.dtype
+
+
+def residual_add(x, update):
+    return x + update.to(dtype=x.dtype)
+
+
 def linear(x, weight):
     b = backend(x)
     rows = x.size // x.shape[-1]
     out_features, inner = weight.shape
     precision = matmul_precision()
     values = b.gemm(
-        x.storage, weight.storage, rows, inner, out_features, transpose_right=True
+        x.storage,
+        weight.storage,
+        rows,
+        inner,
+        out_features,
+        transpose_right=True,
+        out_dtype=activation_dtype(x, weight),
     )
 
     def backward(g):
         with set_matmul_precision(precision):
             dx = (
-                b.gemm(g, weight.storage, rows, out_features, inner)
+                b.gemm(g, weight.storage, rows, out_features, inner, out_dtype=x.dtype)
                 if x.requires_grad
                 else None
             )
             dw = (
-                b.gemm(g, x.storage, out_features, rows, inner, transpose_left=True)
+                b.gemm(
+                    g,
+                    x.storage,
+                    out_features,
+                    rows,
+                    inner,
+                    transpose_left=True,
+                    out_dtype=weight.dtype,
+                )
                 if weight.requires_grad
                 else None
             )
@@ -169,7 +198,13 @@ def projection_loss(hidden, weight, labels, chunk_size):
         rows = len(part)
         inputs = b.head_rows(hidden.storage, start, rows, width, time)
         logits = b.gemm(
-            inputs, weight.storage, rows, width, vocab, transpose_right=True
+            inputs,
+            weight.storage,
+            rows,
+            width,
+            vocab,
+            transpose_right=True,
+            out_dtype=activation_dtype(hidden, weight),
         )
         b.add_into(result, b.head_loss(logits, part, rows, vocab))
     result = base.scale(result, 1 / count)
@@ -183,18 +218,36 @@ def projection_loss(hidden, weight, labels, chunk_size):
                 rows = len(part)
                 inputs = b.head_rows(hidden.storage, start, rows, width, time)
                 logits = b.gemm(
-                    inputs, weight.storage, rows, width, vocab, transpose_right=True
+                    inputs,
+                    weight.storage,
+                    rows,
+                    width,
+                    vocab,
+                    transpose_right=True,
+                    out_dtype=activation_dtype(hidden, weight),
                 )
                 incoming = b.head_gradient(logits, part, rows, vocab, gradient, count)
                 if hidden.requires_grad:
-                    contribution = b.gemm(incoming, weight.storage, rows, vocab, width)
+                    contribution = b.gemm(
+                        incoming,
+                        weight.storage,
+                        rows,
+                        vocab,
+                        width,
+                        out_dtype=hidden.dtype,
+                    )
                     b.head_rows_backward(dx, contribution, start, rows, width, time)
                 if weight.requires_grad:
-                    b.add_into(
-                        dw,
-                        b.gemm(
-                            incoming, inputs, vocab, rows, width, transpose_left=True
-                        ),
+                    b.gemm(
+                        incoming,
+                        inputs,
+                        vocab,
+                        rows,
+                        width,
+                        transpose_left=True,
+                        out_dtype=weight.dtype,
+                        out=dw,
+                        accumulate=True,
                     )
             return (dx, dw)
 
@@ -322,7 +375,8 @@ class SparseMoE:
         self.last_counts = (0,) * self.n_experts
 
     def __call__(self, x):
-        scores = self.router(x)
+        with set_matmul_precision(None):
+            scores = self.router(x.to(dtype=self.router.weight.dtype))
         b = backend(x)
         rows = x.size // x.shape[-1]
         route = b.routing(scores.storage, rows, self.n_experts, self.top_k)
@@ -336,7 +390,7 @@ class SparseMoE:
             (scores,),
             lambda g: (b.routing_backward(g, route, True),),
         )
-        self.last_counts = route['counts']
+        self.last_counts = route["counts"]
         self.utilization = Tensor(route["utilization"], shape=(self.n_experts,))
         outputs = []
         for expert, layer in enumerate(self.experts):
@@ -375,13 +429,17 @@ class Block:
         )
 
     def __call__(self, x):
-        x = x + self.attn(self.attn_norm(x))
+        x = residual_add(x, self.attn(self.attn_norm(x)))
         if self.is_moe:
             y, aux = self.ffn(self.ffn_norm(x))
         else:
             y = self.ffn(self.ffn_norm(x))
             aux = Tensor(get_backend(x.device).full(1, dtype=x.dtype), shape=())
-        return (x + y, aux)
+        return (residual_add(x, y), aux)
+
+    def hidden(self, x):
+        """Dense 重计算只保留 hidden，不打包没有梯度的零辅助损失。"""
+        return self(x)[0]
 
     def packed(self, x):
         return pack(*self(x))

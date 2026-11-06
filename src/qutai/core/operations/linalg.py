@@ -40,10 +40,10 @@ def _matmul_gradients(gradient: Storage, left: Operand, right: Operand, left_sha
         rows, inner, columns = left_shape[-2], left_shape[-1], right_shape[-1]
         if left.requires_grad:
             left_gradient = backend.gemm(gradient, right.storage, rows, columns, inner,
-                                         batch=prod(batches), transpose_right=True)
+                                         batch=prod(batches), transpose_right=True, out_dtype=left.storage.dtype)
         if right.requires_grad:
             right_gradient = backend.gemm(left.storage, gradient, inner, rows, columns,
-                                          batch=prod(batches), transpose_left=True)
+                                          batch=prod(batches), transpose_left=True, out_dtype=right.storage.dtype)
     else:
         if left.requires_grad:
             transposed = backend.transpose(right.storage, right_shape, axes=right_axes)
