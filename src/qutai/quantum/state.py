@@ -32,7 +32,7 @@ class State:
         if isinstance(amplitudes, Storage) and amplitudes.device != device: raise ValueError("输入振幅与目标设备必须相同")
         self.storage = backend.basis_state(qubits, dtype=dtype) if amplitudes is None else backend.from_storage(amplitudes, dtype=dtype) if isinstance(amplitudes, Storage) else backend.storage(amplitudes, dtype=dtype)
         if self.storage.size != 2 ** qubits: raise ValueError("振幅数量必须等于 2 的量子比特数量次方")
-        if not isclose(backend.inner(self.storage, self.storage).real, 1.0, rel_tol=1e-6 if dtype == "complex64" else 1e-10, abs_tol=1e-7 if dtype == "complex64" else 1e-12):
+        if amplitudes is not None and not isclose(backend.inner(self.storage, self.storage).real, 1.0, rel_tol=1e-6 if dtype == "complex64" else 1e-10, abs_tol=1e-7 if dtype == "complex64" else 1e-12):
             raise ValueError("量子态必须归一化：振幅绝对值的平方和应为 1")
 
     @property
@@ -69,7 +69,7 @@ class State:
     def apply(self, gate: Gate) -> Self:
         """原地执行一个门，只计算局部振幅，不构造完整的大矩阵。"""
         selected_wires(self.qubits, gate.wires)
-        self.storage = get_backend(self.device).apply_gate(self.storage, self.qubits, gate.wires, gate.matrix)
+        self.storage = gate._apply(self.storage, self.qubits)
         return self
 
     def probabilities(self, wires: int | tuple[int, ...] | None = None) -> list[float]:

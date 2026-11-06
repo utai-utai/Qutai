@@ -52,7 +52,7 @@ class StorageTests(unittest.TestCase):
             self.assertEqual((data.size, data.tolist()), (0, []))
             self.assertEqual(data.copy().dtype, dtype)
         self.assertIs(get_backend(), cpu)
-        for device in ("cuda", "mps", "unknown"):
+        for device in ("bad", "mps", "unknown"):
             with self.subTest(device=device), self.assertRaisesRegex(ValueError, "设备"):
                 get_backend(device)
         with self.assertRaisesRegex(ValueError, "精度"):

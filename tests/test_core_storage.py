@@ -73,7 +73,7 @@ class TensorStorageTests(unittest.TestCase):
 
     def test_public_device_dtype_and_shape_contracts_fail_clearly(self):
         with self.assertRaisesRegex(ValueError, "设备"):
-            Tensor([1], device="cuda")
+            Tensor([1], device="bad")
         with self.assertRaisesRegex(ValueError, "float64"):
             Tensor([1], dtype="float16")
         with self.assertRaises(ValueError):

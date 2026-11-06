@@ -5,7 +5,7 @@
 <big align="center"><strong>从零手写的轻量计算 SDK：数值计算、神经网络与量子计算。</strong></b>
 ---
 
-Python 标准库实现，无第三方运行依赖。当前支持 CPU，CUDA 后端后续开发。
+Python 标准库实现，无第三方运行依赖。支持 CPU 和 NVIDIA CUDA 后端；CUDA 的实数和复数内核在 GPU 上执行。
 
 ## 安装
 
@@ -62,3 +62,39 @@ print(state.probabilities())  # 约 [0.5, 0.0, 0.0, 0.5]
 python -m pip install -e .
 python -m unittest discover -s tests
 ```
+
+## CUDA（Windows / NVIDIA）
+
+Python SDK 仍然没有第三方运行依赖。CUDA 通过标准库 `ctypes` 调用 NVIDIA Driver API 和 NVRTC；需要另外安装 NVIDIA 驱动和 CUDA Toolkit（含 NVRTC）。普通 CPU 导入不加载 CUDA DLL，也不需要安装 Toolkit。
+
+```python
+from qutai import Tensor, nn, is_available
+
+assert is_available("cuda")
+model = nn.Model([nn.Linear(2, 4), nn.ReLU(), nn.Linear(4, 1)])
+model.to("cuda", dtype="float32")
+optimizer = nn.AdamW(model, learning_rate=0.01)
+for _ in range(2):
+    optimizer.zero_grad()
+    loss = nn.MSE()(model([[1, 2], [2, 1]]), [[3], [3]])
+    loss.backward()
+    optimizer.step()
+    print(loss.item())
+```
+
+沿用统一 `Tensor(..., device=..., dtype=...)`、`tensor.to(...)` 和 `model.to(...)` 接口。已有 Tensor 输入必须与模型同设备、同精度，例如 `inputs.to("cuda", dtype="float32")`；普通数字或列表沿用模型参数配置。先迁移模型，再建立新的前向图；已有优化器状态会在 `step()` 跟随参数迁移。`tolist()` / `item()`、可视化、模型保存、采样输出是明确的数据读取出口。
+
+CUDA 提供 float32 / float64、complex64 / complex128 和内部 int64 存储；建议先用 float32，量子态对应 complex64。覆盖基础运算、自动求导、CNN、归一化、Transformer / KV cache、生成模型、量子态与可训练量子电路。计算使用自有 `.cu` 内核，无 CPU 计算回退；当前为单 GPU 同步执行，尚未做性能优化。
+
+首次启动某类内核时，NVRTC 按当前设备的 SM 编译原生 CUBIN，进程内缓存模块；这避免新 Toolkit 的 PTX 版本超过驱动 JIT 支持版本。`CUDA_PATH` / `CUDA_HOME` 可指定 Toolkit；Windows 也检查标准安装目录。发布包携带 `.cu` 源码。
+
+本机验证环境：Python 3.14.0（64 位）、Windows、RTX PRO 4000 Blackwell（SM120，约 24 GB）、驱动 596.72、CUDA / NVRTC 13.4。其他 GPU 尚未实卡验证。
+
+Windows 开发与测试使用 UTF-8 模式（PyCharm 也可设置 `PYTHONUTF8=1`），以免默认 GBK 无法显示进度条或读取 SVG：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests
+```
+
+GPU 测试在没有 CUDA 的环境中跳过；CPU CI 的通过不代表实卡验证。NVIDIA 接口依据：[NVRTC](https://docs.nvidia.com/cuda/nvrtc/)、[CUDA Driver API](https://docs.nvidia.com/cuda/cuda-driver-api/)。

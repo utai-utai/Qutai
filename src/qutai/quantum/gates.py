@@ -2,6 +2,8 @@ from cmath import exp, isclose
 from collections.abc import Callable
 from math import cos, pi, sin, sqrt
 
+from ..backends.device import get_backend
+from ..backends.storage import Storage
 from ..core.tensor import Tensor
 from .observables import Hermitian, Matrix, Observable, Operator
 
@@ -53,6 +55,11 @@ class Gate(Operator):
         if isinstance(self.angle, Tensor): raise TypeError("观测量必须固定，不能使用 Tensor 角度")
         return Hermitian(self.wires, self.matrix)
 
+    def _apply(self, values: Storage, qubits: int, *, adjoint: bool = False, derivative: bool = False) -> Storage:
+        """固定门及 CPU 旋转共用原来的局部矩阵路径。"""
+        matrix = self.derivative_matrix if derivative else self.adjoint_matrix if adjoint else self.matrix
+        return get_backend(values.device).apply_gate(values, qubits, self.wires, matrix)
+
 
 def _angle(angle: float | Tensor) -> float:
     """读取当前角度；保留门中原来的 Tensor 引用。"""
@@ -62,7 +69,9 @@ def _angle(angle: float | Tensor) -> float:
 class _Rotation(Gate):
     """旋转门保留角度，每次执行重新生成矩阵。"""
     def __init__(self, name: str, wire: int, angle: float | Tensor, operation: Callable[[float], Matrix]) -> None:
-        super().__init__(name, (wire,), operation(_angle(angle)))
+        if isinstance(angle, Tensor) and angle.size != 1: raise ValueError("只有包含一个元素的值才能取出单个数字")
+        # Tensor 角度在执行时读取；创建门不把 GPU 参数导回 CPU。
+        super().__init__(name, (wire,), operation(0.0 if isinstance(angle, Tensor) else angle))
         self.angle: float | Tensor = angle
         self._operation = operation
 
@@ -75,10 +84,22 @@ class _Rotation(Gate):
         """RX、RY、RZ 的精确导数为旋转角增加 pi 后的矩阵乘以 1/2。"""
         return tuple(tuple(value / 2 for value in row) for row in self._operation(_angle(self.angle) + pi))
 
-    def bind(self, angle: float | None = None) -> Gate:
-        """生成不再引用 Tensor 的角度快照，也用于单个门的参数偏移。"""
-        value = _angle(self.angle) if angle is None else angle
+    def bind(self, angle: float | Tensor | None = None) -> Gate:
+        """生成独立的角度快照，也用于单个门的参数偏移。"""
+        value = angle
+        if angle is None:
+            value = self.angle
+            if isinstance(value, Tensor):
+                value = value.item() if value.device == "cpu" else Tensor(value.storage.copy(), shape=value.shape)
         return _Rotation(self.name, self.wires[0], value, self._operation)
+
+    def _apply(self, values: Storage, qubits: int, *, adjoint: bool = False, derivative: bool = False) -> Storage:
+        """GPU 旋转直接消费设备角度；状态向量和局部导数都留在 GPU。"""
+        if isinstance(self.angle, Tensor) and self.angle.device != "cpu":
+            if values.device != self.angle.device: raise ValueError("旋转角度与量子态必须位于同一设备")
+            return get_backend(values.device).apply_rotation(values, qubits, self.wires[0], self.name,
+                                                             self.angle.storage, adjoint=adjoint, derivative=derivative)
+        return super()._apply(values, qubits, adjoint=adjoint, derivative=derivative)
 
 
 def _rx(angle: float) -> Matrix:

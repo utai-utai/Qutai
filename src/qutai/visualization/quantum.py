@@ -4,6 +4,7 @@ from pathlib import Path
 
 from ..quantum import Circuit as QuantumCircuit, Gate, State, X, Y, Z
 from ..quantum.state import selected_wires
+from ..core.tensor import Tensor
 from ._svg import save_svg, svg, text
 
 
@@ -22,7 +23,8 @@ def _columns(gates: tuple[Gate, ...], qubits: int) -> list[int]:
 class Circuit:
     """只读取电路结构；时间从左到右，q0 是最上方的量子比特。"""
     def __init__(self, circuit: QuantumCircuit, title: str = "") -> None:
-        self.qubits, self.gates = circuit.qubits, tuple(gate.bind() for gate in circuit.gates)
+        self.qubits = circuit.qubits
+        self.gates = tuple(gate.bind(gate.angle.item()) if isinstance(gate.angle, Tensor) else gate.bind() for gate in circuit.gates)
         self.title = title
 
     def _repr_svg_(self) -> str:

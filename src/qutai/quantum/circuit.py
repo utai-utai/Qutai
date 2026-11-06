@@ -36,7 +36,7 @@ class Circuit:
         """收集门引用的 Tensor 角度，共享参数只返回一次。"""
         return tuple(dict.fromkeys(gate.angle for gate in self.gates if isinstance(gate.angle, Tensor)))
 
-    def _snapshot(self, state: State | None) -> tuple[State, tuple[Gate, ...], tuple[Tensor, ...], tuple[tuple[int, float], ...]]:
+    def _snapshot(self, state: State | None) -> tuple[State, tuple[Gate, ...], tuple[Tensor, ...], tuple[tuple[int, float | Tensor], ...]]:
         """复制初态和门的数值，同时保留每个 Tensor 角度对应的计算关系。"""
         if state is not None and state.qubits != self.qubits: raise ValueError("输入量子态与电路的量子比特数量必须相同")
         parameters = self.parameters()
@@ -49,7 +49,7 @@ class Circuit:
         for position, gate in enumerate(self.gates):
             angle = gate.angle
             if isinstance(angle, Tensor):
-                value = angle.item()
+                value = angle.item() if angle.device == "cpu" else Tensor(angle.storage.copy(), shape=angle.shape)
                 parents.append(angle)
                 rotations.append((position, value))
                 gates.append(gate.bind(value))

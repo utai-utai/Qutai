@@ -1,8 +1,8 @@
-from . import cpu
+from . import cpu, cuda
 from .storage import Storage
 
 
-_BACKENDS = {"cpu": cpu}
+_BACKENDS = {"cpu": cpu, "cuda": cuda}
 
 
 def get_backend(device: str | Storage = "cpu", *others: Storage):

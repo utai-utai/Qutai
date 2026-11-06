@@ -16,3 +16,6 @@ Issues = "https://github.com/utai-utai/Qutai/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+qutai = ["backends/kernels/*.cu"]

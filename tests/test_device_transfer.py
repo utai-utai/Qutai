@@ -34,7 +34,7 @@ class DeviceTransferTests(unittest.TestCase):
     def test_availability_and_sync_do_not_claim_gpu_support(self):
         self.assertTrue(is_available('cpu'))
         self.assertIsNone(synchronize())
-        for name in ('cuda', 'mps', 'bad'):
+        for name in ('mps', 'bad'):
             self.assertFalse(is_available(name))
             with self.assertRaisesRegex(ValueError, '设备'): synchronize(name)
 
@@ -46,7 +46,7 @@ class DeviceTransferTests(unittest.TestCase):
         self.assertEqual(copied.tolist(), data.tolist())
         converted = transfer(data, dtype='float32')
         self.assertEqual((converted.dtype, converted.tolist()), ('float32', [1, 2]))
-        for device in ('cuda', 'mps', ''):
+        for device in ('bad', 'mps', ''):
             with self.assertRaises(ValueError): transfer(data, device)
 
     def test_cast_backward_returns_gradient_to_original_precision(self):
@@ -138,7 +138,7 @@ class DeviceTransferTests(unittest.TestCase):
         with self.assertRaises(ValueError): model.to('mps', dtype='float32')
         for p, value in zip(model.parameters(), before, strict=True): self.assertIs(p.storage, value)
         self.assertIs(bn.running_mean, stats)
-        with self.assertRaises(ValueError): nn.Model().to('cuda')
+        with self.assertRaises(ValueError): nn.Model().to('bad')
 
     def test_optimizer_states_follow_parameters_and_resume(self):
         for optimizer_type, options in ((nn.SGD, {'momentum': 0.9}), (nn.AdamW, {})):

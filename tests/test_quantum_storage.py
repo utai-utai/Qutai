@@ -105,7 +105,7 @@ class QuantumStorageTests(unittest.TestCase):
 
     def test_unimplemented_state_device_is_rejected_before_allocating(self):
         with self.assertRaisesRegex(ValueError, "设备"):
-            State(1, device="cuda")
+            State(1, device="bad")
 
 
 if __name__ == "__main__":
