@@ -2,7 +2,6 @@
 
 import csv
 import unittest
-from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from struct import unpack_from
@@ -81,17 +80,15 @@ class VisualizationTests(unittest.TestCase):
     def test_png_preserves_original_gray_rgb_and_scaled_scanlines(self):
         fixtures = (
             (bytes([0, 255, 128, 64]), (1, 2, 2), 4, 4, 0,
-             b'\x00\x00\x00\xff\xff' * 2 + b'\x00\x80\x80\x40\x40' * 2,
-             '0ee3e9e3fab29628f7b5c96cb9fdb6ff0e5401084bd6262c69dca8f4fd17ec8b'),
+             b'\x00\x00\x00\xff\xff' * 2 + b'\x00\x80\x80\x40\x40' * 2),
             (bytes([255, 0, 0, 255, 0, 0]), (3, 1, 2), 4, 2, 2,
-             (b'\x00' + bytes([255, 0, 0]) * 2 + bytes([0, 255, 0]) * 2) * 2,
-             '4cd5e780536c29a6692a62d7f5bc521b1cc4ebf7d4750a98619e06d7794141a1'),
+             (b'\x00' + bytes([255, 0, 0]) * 2 + bytes([0, 255, 0]) * 2) * 2),
         )
-        for pixels, shape, width, height, color, scanlines, digest in fixtures:
+        for pixels, shape, width, height, color, scanlines in fixtures:
             with self.subTest(shape=shape), TemporaryDirectory() as folder:
                 image = Image(pixels, shape, scale=2)
                 content = image._repr_png_()
-                self.assertEqual(sha256(content).hexdigest(), digest)
+                # 压缩结果可能随 zlib 版本变化，核对 PNG 结构和解压后的像素。
                 self.assertEqual(content[:8], b'\x89PNG\r\n\x1a\n')
                 chunks, offset = {}, 8
                 while offset < len(content):
@@ -101,6 +98,9 @@ class VisualizationTests(unittest.TestCase):
                     self.assertEqual(unpack_from('>I', content, offset + 8 + length)[0], crc32(kind + payload))
                     chunks[kind] = payload
                     offset += length + 12
+                self.assertEqual(offset, len(content))
+                self.assertEqual(list(chunks), [b'IHDR', b'IDAT', b'IEND'])
+                self.assertEqual(chunks[b'IEND'], b'')
                 self.assertEqual(unpack_from('>IIBBBBB', chunks[b'IHDR']), (width, height, 8, color, 0, 0, 0))
                 self.assertEqual(decompress(chunks[b'IDAT']), scanlines)
                 self.assertEqual(image.save(Path(folder) / 'image.png').read_bytes(), content)
