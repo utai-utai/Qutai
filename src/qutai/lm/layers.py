@@ -184,13 +184,16 @@ def unpack(packed, shape):
     return (hidden, aux)
 
 
-def projection_loss(hidden, weight, labels, chunk_size):
+def projection_loss(hidden, weight, labels, chunk_size, *, prepared_labels=None):
     b = backend(hidden)
     base = get_backend(hidden.device)
     batch, time, width = hidden.shape
     vocab = weight.shape[0]
     precision = matmul_precision()
     targets = tuple((label for row in labels for label in row[1:]))
+    label_data = (
+        b.prepare_labels(targets) if prepared_labels is None else prepared_labels
+    )
     count = max(1, sum((label != -100 for label in targets)))
     result = base.full(1, dtype=hidden.dtype)
     for start in range(0, len(targets), chunk_size):
@@ -206,7 +209,7 @@ def projection_loss(hidden, weight, labels, chunk_size):
             transpose_right=True,
             out_dtype=activation_dtype(hidden, weight),
         )
-        b.add_into(result, b.head_loss(logits, part, rows, vocab))
+        b.add_into(result, b.head_loss(logits, label_data, rows, vocab, start=start))
     result = base.scale(result, 1 / count)
 
     def backward(gradient):
@@ -226,7 +229,9 @@ def projection_loss(hidden, weight, labels, chunk_size):
                     transpose_right=True,
                     out_dtype=activation_dtype(hidden, weight),
                 )
-                incoming = b.head_gradient(logits, part, rows, vocab, gradient, count)
+                incoming = b.head_gradient(
+                    logits, label_data, rows, vocab, gradient, count, start=start
+                )
                 if hidden.requires_grad:
                     contribution = b.gemm(
                         incoming,

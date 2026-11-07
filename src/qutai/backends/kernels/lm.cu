@@ -155,6 +155,135 @@ extern "C" __global__ void lm_attention_bf16_d64(const A* q,const A* k,const A* 
         if(lane==0)lse[(batch*time+query)*heads+head]=maximum+logf(normalizer);
     }
 }
+// D64 backward: one block owns its output tile, so reductions need no atomics.
+extern "C" __global__ void lm_attention_bf16_dq(const A* g,const A* q,const A* k,const A* v,
+        const float* lse,const float* delta,A* dq,I time,I heads,I kv_heads) {
+    using namespace nvcuda;
+    __shared__ __align__(32) A queries[16][64],incoming[16][64],keys[64][64],values[64][64],derivative[16][64];
+    __shared__ __align__(32) float score[16][64],product[16][64];
+    int tid=threadIdx.x,warp=tid/32,row=tid/8,lane=tid%8;
+    I start_query=(I)blockIdx.x*16,head=blockIdx.y,batch=blockIdx.z,kv=head/(heads/kv_heads);
+    for(int i=tid;i<16*64;i+=128) {
+        I t=start_query+i/64,at=((batch*time+t)*heads+head)*64+i%64;
+        queries[i/64][i%64]=t<time?q[at]:A(0.0f);
+        incoming[i/64][i%64]=t<time?g[at]:A(0.0f);
+    }
+    wmma::fragment<wmma::accumulator,16,16,16,float> gradient;
+    wmma::fill_fragment(gradient,0.0f);
+    __syncthreads();
+    for(I start=0;start<time&&start<start_query+16;start+=64) {
+        for(int i=tid;i<64*64;i+=128) {
+            I t=start+i/64,at=((batch*time+t)*kv_heads+kv)*64+i%64;
+            keys[i/64][i%64]=t<time?k[at]:A(0.0f);
+            values[i/64][i%64]=t<time?v[at]:A(0.0f);
+        }
+        __syncthreads();
+        wmma::fragment<wmma::accumulator,16,16,16,float> scores,products;
+        wmma::fill_fragment(scores,0.0f);wmma::fill_fragment(products,0.0f);
+        for(int d=0;d<64;d+=16) {
+            wmma::fragment<wmma::matrix_a,16,16,16,A,wmma::row_major> qa,ga;
+            wmma::fragment<wmma::matrix_b,16,16,16,A,wmma::col_major> kb,vb;
+            wmma::load_matrix_sync(qa,&queries[0][d],64);
+            wmma::load_matrix_sync(ga,&incoming[0][d],64);
+            wmma::load_matrix_sync(kb,&keys[warp*16][d],64);
+            wmma::load_matrix_sync(vb,&values[warp*16][d],64);
+            wmma::mma_sync(scores,qa,kb,scores);wmma::mma_sync(products,ga,vb,products);
+        }
+        wmma::store_matrix_sync(&score[0][warp*16],scores,64,wmma::mem_row_major);
+        wmma::store_matrix_sync(&product[0][warp*16],products,64,wmma::mem_row_major);
+        __syncthreads();
+        I t=start_query+row,at=(batch*time+t)*heads+head;
+        for(int col=lane;col<64;col+=8) {
+            float p=t<time&&start+col<=t?expf(score[row][col]*0.125f-lse[at]):0.0f;
+            float ds=t<time?p*(product[row][col]-delta[at])*0.125f:0.0f;
+            derivative[row][col]=__float2bfloat16_rn(ds);
+        }
+        __syncthreads();
+        for(int d=0;d<64;d+=16) {
+            wmma::fragment<wmma::matrix_a,16,16,16,A,wmma::row_major> da;
+            wmma::fragment<wmma::matrix_b,16,16,16,A,wmma::row_major> kb;
+            wmma::load_matrix_sync(da,&derivative[0][d],64);
+            wmma::load_matrix_sync(kb,&keys[d][warp*16],64);
+            wmma::mma_sync(gradient,da,kb,gradient);
+        }
+        __syncthreads();
+    }
+    wmma::store_matrix_sync(&score[0][warp*16],gradient,64,wmma::mem_row_major);
+    __syncthreads();
+    I t=start_query+row,at=((batch*time+t)*heads+head)*64;
+    if(t<time)for(int d=lane;d<64;d+=8)dq[at+d]=__float2bfloat16_rn(score[row][d]);
+}
+
+extern "C" __global__ void lm_attention_bf16_dkv(const A* g,const A* q,const A* k,const A* v,
+        const float* lse,const float* delta,A* dk,A* dv,I time,I heads,I kv_heads) {
+    using namespace nvcuda;
+    __shared__ __align__(32) A queries[64][64],incoming[64][64],keys[16][64],values[16][64];
+    __shared__ __align__(32) A probabilities[64][16],derivative[64][16];
+    __shared__ __align__(32) float score[64][16],product[64][16];
+    int tid=threadIdx.x,warp=tid/32,row=tid/2,lane=tid%2;
+    I start_key=(I)blockIdx.x*16,kv=blockIdx.y,batch=blockIdx.z,repeats=heads/kv_heads;
+    for(int i=tid;i<16*64;i+=128) {
+        I t=start_key+i/64,at=((batch*time+t)*kv_heads+kv)*64+i%64;
+        keys[i/64][i%64]=t<time?k[at]:A(0.0f);
+        values[i/64][i%64]=t<time?v[at]:A(0.0f);
+    }
+    wmma::fragment<wmma::accumulator,16,16,16,float> gradient_k,gradient_v;
+    wmma::fill_fragment(gradient_k,0.0f);wmma::fill_fragment(gradient_v,0.0f);
+    __syncthreads();
+    for(I head=kv*repeats;head<(kv+1)*repeats;head++) {
+        for(I start=(start_key/64)*64;start<time;start+=64) {
+            for(int i=tid;i<64*64;i+=128) {
+                I t=start+i/64,at=((batch*time+t)*heads+head)*64+i%64;
+                queries[i/64][i%64]=t<time?q[at]:A(0.0f);
+                incoming[i/64][i%64]=t<time?g[at]:A(0.0f);
+            }
+            __syncthreads();
+            wmma::fragment<wmma::accumulator,16,16,16,float> scores,products;
+            wmma::fill_fragment(scores,0.0f);wmma::fill_fragment(products,0.0f);
+            for(int d=0;d<64;d+=16) {
+                wmma::fragment<wmma::matrix_a,16,16,16,A,wmma::row_major> qa,ga;
+                wmma::fragment<wmma::matrix_b,16,16,16,A,wmma::col_major> kb,vb;
+                wmma::load_matrix_sync(qa,&queries[warp*16][d],64);
+                wmma::load_matrix_sync(ga,&incoming[warp*16][d],64);
+                wmma::load_matrix_sync(kb,&keys[0][d],64);
+                wmma::load_matrix_sync(vb,&values[0][d],64);
+                wmma::mma_sync(scores,qa,kb,scores);wmma::mma_sync(products,ga,vb,products);
+            }
+            wmma::store_matrix_sync(&score[warp*16][0],scores,16,wmma::mem_row_major);
+            wmma::store_matrix_sync(&product[warp*16][0],products,16,wmma::mem_row_major);
+            __syncthreads();
+            I t=start+row,at=(batch*time+t)*heads+head;
+            for(int col=lane;col<16;col+=2) {
+                float p=t<time&&start_key+col<time&&start_key+col<=t?expf(score[row][col]*0.125f-lse[at]):0.0f;
+                float ds=t<time?p*(product[row][col]-delta[at])*0.125f:0.0f;
+                probabilities[row][col]=__float2bfloat16_rn(p);
+                derivative[row][col]=__float2bfloat16_rn(ds);
+            }
+            __syncthreads();
+            for(int d=0;d<64;d+=16) {
+                wmma::fragment<wmma::matrix_a,16,16,16,A,wmma::col_major> da,pa;
+                wmma::fragment<wmma::matrix_b,16,16,16,A,wmma::row_major> qb,gb;
+                wmma::load_matrix_sync(da,&derivative[d][0],16);
+                wmma::load_matrix_sync(pa,&probabilities[d][0],16);
+                wmma::load_matrix_sync(qb,&queries[d][warp*16],64);
+                wmma::load_matrix_sync(gb,&incoming[d][warp*16],64);
+                wmma::mma_sync(gradient_k,da,qb,gradient_k);wmma::mma_sync(gradient_v,pa,gb,gradient_v);
+            }
+            __syncthreads();
+        }
+    }
+    // Inputs are no longer needed; reuse the query tile for final FP32 stores.
+    float* scratch=(float*)queries;
+    wmma::store_matrix_sync(scratch+warp*16,gradient_k,64,wmma::mem_row_major);
+    __syncthreads();
+    I t=start_key+tid/8,feature=tid%8,at=((batch*time+t)*kv_heads+kv)*64;
+    if(t<time)for(int d=feature;d<64;d+=8)dk[at+d]=__float2bfloat16_rn(scratch[(tid/8)*64+d]);
+    __syncthreads();
+    wmma::store_matrix_sync(scratch+warp*16,gradient_v,64,wmma::mem_row_major);
+    __syncthreads();
+    if(t<time)for(int d=feature;d<64;d+=8)dv[at+d]=__float2bfloat16_rn(scratch[(tid/8)*64+d]);
+}
+
 #endif
 
 extern "C" __global__ void lm_attention_delta(const A* g,const A* out,R* delta,I rows,I dim) {
@@ -267,6 +396,12 @@ extern "C" __global__ void lm_route_gather(const A* x,const I* ids,A* out,I n,I 
 }
 extern "C" __global__ void lm_combine(const A* y,const R* w,const I* ids,const I* slots,A* out,I n,I width,I base,I top_k){
     ITEM;I route=i/width,row=ids[base+route],slot=slots[base+route];out[row*width+i%width]=read(out,row*width+i%width)+read(y,i)*w[row*top_k+slot];
+}
+extern "C" __global__ void lm_pointer_table(I* out,I start,I count,I p0,I p1,I p2,I p3,I p4,I p5,I p6,I p7) {
+    I index=threadIdx.x;
+    if(index>=count)return;
+    I values[8]={p0,p1,p2,p3,p4,p5,p6,p7};
+    out[start+index]=values[index];
 }
 // 每个输出只写一次；所有 slot 乘加在 REAL 中完成，不逐专家舍入 BF16。
 extern "C" __global__ void lm_combine_all(const unsigned long long* pointers,const R* weights,

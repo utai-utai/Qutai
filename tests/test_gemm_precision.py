@@ -138,6 +138,75 @@ class GEMMPrecisionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cuda.gemm(a, a, 3, 2, 2)
 
+    def test_large_mixed_transposes_and_partial_output_tiles(self):
+        m, k, n = 1025, 129, 1025
+        a = [math.sin(i * 0.013) * 0.03 for i in range(m * k)]
+        b = [math.cos(i * 0.017) * 0.02 for i in range(k * n)]
+        ra, rb = list(map(bf16, a)), list(map(bf16, b))
+        left, right = (
+            cuda.storage(a, dtype="bfloat16"),
+            cuda.storage(b, dtype="float32"),
+        )
+        coordinates = (0, 15, 16, 63, 64, 127, 128, 1023, 1024)
+        positions = [r * n + c for r in coordinates for c in coordinates]
+        for ta, tb in ((False, False), (True, False), (False, True), (True, True)):
+            expected = [
+                sum(
+                    ra[p * m + r if ta else r * k + p]
+                    * rb[c * k + p if tb else p * n + c]
+                    for p in range(k)
+                )
+                for r in coordinates
+                for c in coordinates
+            ]
+            target = cuda.full(m * n, 0.25, dtype="float32")
+            result = cuda.gemm(
+                left, right, m, k, n, transpose_left=ta, transpose_right=tb, out=target
+            )
+            self.assertIs(result, target)
+            self.assertValues(cuda.gather(result, positions).tolist(), expected, 2e-7)
+            cuda.gemm(
+                left,
+                right,
+                m,
+                k,
+                n,
+                transpose_left=ta,
+                transpose_right=tb,
+                out=target,
+                accumulate=True,
+            )
+            self.assertValues(
+                cuda.gather(target, positions).tolist(), [2 * x for x in expected], 4e-7
+            )
+        rounded = cuda.gemm(left, right, m, k, n, out_dtype="bfloat16")
+        expected = [
+            sum(ra[p + r * k] * rb[p * n + c] for p in range(k))
+            for r in coordinates
+            for c in coordinates
+        ]
+        self.assertEqual(rounded.nbytes, m * n * 2)
+        self.assertValues(
+            cuda.gather(rounded, positions).tolist(), list(map(bf16, expected)), 6.2e-5
+        )
+
+    def test_long_reduction_partial_tiles_batch_and_accumulate(self):
+        m, k, n = 129, 8193, 1025
+        left = cuda.full(m * k, 0.5, dtype="bfloat16")
+        parts = (
+            cuda.full(k * n, -0.25, dtype="float32"),
+            cuda.full(k * n, 0.5, dtype="float32"),
+        )
+        right = cuda.concatenate(parts, ((k, n), (k, n)))
+        target = cuda.full(2 * m * n, 0.25, dtype="float32")
+        result = cuda.gemm(
+            left, right, m, k, n, batch=2, left_stride=0, out=target, accumulate=True
+        )
+        self.assertIs(result, target)
+        values = result.tolist()
+        self.assertTrue(all(x == -k * 0.125 + 0.25 for x in values[: m * n]))
+        self.assertTrue(all(x == k * 0.25 + 0.25 for x in values[m * n :]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,3 +118,66 @@ extern "C" __global__ void normal_fill(R* out,I n,I seed,R mean,R std) {
     double v=((double)y+0.5)/4294967296.0;
     out[i]=mean+std*(R)(sqrt(-2.0*log(u))*cos(6.2831853071795864769*v));
 }
+
+// 较大的输出块复用更多输入；每个 warp 只需一个 16x16 输出暂存。
+#if __CUDA_ARCH__ >= 800
+template<int BM,int BN,int BK,int WM,int WN>
+__device__ __forceinline__ void gemm_bf16_block(const AT* a,const BT* b,OT* out,I M,I K,I N,I sa,I sb,I ta,I tb,I accumulate) {
+    using namespace nvcuda;
+    constexpr int WARPS=(BM/WM)*(BN/WN), THREADS=WARPS*32;
+    constexpr int AP=BK+8, BP=BN+8;
+    constexpr int INPUT_BYTES=(BM*AP+BK*BP)*sizeof(__nv_bfloat16);
+    constexpr int OUTPUT_BYTES=WARPS*256*sizeof(float);
+    __shared__ __align__(32) unsigned char shared[INPUT_BYTES>OUTPUT_BYTES?INPUT_BYTES:OUTPUT_BYTES];
+    auto A=reinterpret_cast<__nv_bfloat16 (*)[AP]>(shared);
+    auto B=reinterpret_cast<__nv_bfloat16 (*)[BP]>(shared+BM*AP*sizeof(__nv_bfloat16));
+    int tid=threadIdx.x,warp=tid/32,lane=tid%32,wy=warp/(BN/WN),wx=warp%(BN/WN);
+    I br=(I)blockIdx.y*BM,bc=(I)blockIdx.x*BN;
+    a+=blockIdx.z*sa; b+=blockIdx.z*sb; out+=blockIdx.z*M*N;
+    wmma::fragment<wmma::accumulator,16,16,16,float> c[WM/16][WN/16];
+    #pragma unroll
+    for(int i=0;i<WM/16;i++) for(int j=0;j<WN/16;j++) wmma::fill_fragment(c[i][j],0.0f);
+    for(I start=0;start<K;start+=BK) {
+        for(int i=tid;i<BM*BK;i+=THREADS) {
+            int r=ta?i%BM:i/BK,k=ta?i/BM:i%BK;
+            I gr=br+r,gk=start+k;
+            A[r][k]=(gr<M&&gk<K)?bf16_value(a[ta?gk*M+gr:gr*K+gk]):__float2bfloat16_rn(0.0f);
+        }
+        for(int i=tid;i<BK*BN;i+=THREADS) {
+            int k=tb?i%BK:i/BN,col=tb?i/BK:i%BN;
+            I gk=start+k,gc=bc+col;
+            B[k][col]=(gk<K&&gc<N)?bf16_value(b[tb?gc*K+gk:gk*N+gc]):__float2bfloat16_rn(0.0f);
+        }
+        __syncthreads();
+        #pragma unroll
+        for(int k=0;k<BK;k+=16) {
+            wmma::fragment<wmma::matrix_a,16,16,16,__nv_bfloat16,wmma::row_major> aa[WM/16];
+            wmma::fragment<wmma::matrix_b,16,16,16,__nv_bfloat16,wmma::row_major> bb[WN/16];
+            #pragma unroll
+            for(int i=0;i<WM/16;i++) wmma::load_matrix_sync(aa[i],&A[wy*WM+i*16][k],AP);
+            #pragma unroll
+            for(int j=0;j<WN/16;j++) wmma::load_matrix_sync(bb[j],&B[k][wx*WN+j*16],BP);
+            #pragma unroll
+            for(int i=0;i<WM/16;i++) for(int j=0;j<WN/16;j++) wmma::mma_sync(c[i][j],aa[i],bb[j],c[i][j]);
+        }
+        __syncthreads();
+    }
+    float* tile=reinterpret_cast<float*>(shared)+warp*256;
+    #pragma unroll
+    for(int i=0;i<WM/16;i++) for(int j=0;j<WN/16;j++) {
+        wmma::store_matrix_sync(tile,c[i][j],16,wmma::mem_row_major);
+        __syncwarp();
+        for(int at=lane;at<256;at+=32) {
+            I r=br+wy*WM+i*16+at/16,col=bc+wx*WN+j*16+at%16;
+            if(r<M&&col<N) store_value(out+r*N+col,tile[at],accumulate);
+        }
+        __syncwarp();
+    }
+}
+extern "C" __global__ void gemm_bf16_wide(const AT* a,const BT* b,OT* out,I M,I K,I N,I sa,I sb,I ta,I tb,I accumulate) {
+    gemm_bf16_block<128,128,64,64,32>(a,b,out,M,K,N,sa,sb,ta,tb,accumulate);
+}
+extern "C" __global__ void gemm_bf16_long(const AT* a,const BT* b,OT* out,I M,I K,I N,I sa,I sb,I ta,I tb,I accumulate) {
+    gemm_bf16_block<128,64,64,32,32>(a,b,out,M,K,N,sa,sb,ta,tb,accumulate);
+}
+#endif

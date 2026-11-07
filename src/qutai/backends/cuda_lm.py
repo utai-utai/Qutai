@@ -18,8 +18,10 @@ def _run(name, size, *arguments, dtype="float32", block=False, block_size=256):
         name,
         size * block_size if block else size,
         list(arguments),
-        options=("-DREAL=" + ("double" if dtype == "float64" else "float"),
-                 "-DACT_BF16=" + ("1" if dtype == "bfloat16" else "0")),
+        options=(
+            "-DREAL=" + ("double" if dtype == "float64" else "float"),
+            "-DACT_BF16=" + ("1" if dtype == "bfloat16" else "0"),
+        ),
         block_size=block_size,
     )
 
@@ -28,8 +30,19 @@ def normal(size, mean=0.0, std=1.0, *, seed=None, dtype="float32"):
     return cuda.normal(size, mean=mean, std=std, seed=seed, dtype=dtype)
 
 
-def gemm(a, b, rows, inner, cols, *, transpose_left=False, transpose_right=False,
-         out_dtype=None, out=None, accumulate=False):
+def gemm(
+    a,
+    b,
+    rows,
+    inner,
+    cols,
+    *,
+    transpose_left=False,
+    transpose_right=False,
+    out_dtype=None,
+    out=None,
+    accumulate=False,
+):
     return cuda.gemm(
         a,
         b,
@@ -65,7 +78,8 @@ def add_into(target, source):
 
 def embedding(weight, ids, width, *, out_dtype=None):
     dtype = out_dtype or weight.dtype
-    if _acc_dtype(dtype) != weight.dtype: raise ValueError("嵌入参数精度与激活累积精度不一致")
+    if _acc_dtype(dtype) != weight.dtype:
+        raise ValueError("嵌入参数精度与激活累积精度不一致")
     identifiers = cuda.storage(ids, dtype="int64")
     result = cuda.CUDAStorage(len(ids) * width, dtype)
     _run(
@@ -218,17 +232,31 @@ def attention(q, k, v, batch, time, heads, kv_heads, dim):
     if q.dtype == k.dtype == v.dtype == "bfloat16" and dim == 64 and time >= 16:
         out = cuda.CUDAStorage(q.size, q.dtype)
         lse = cuda.CUDAStorage(batch * time * heads, "float32")
-        get_runtime().launch(KERNEL, "lm_attention_bf16_d64", q.size,
-                             [cuda._p(q), cuda._p(k), cuda._p(v), cuda._p(out), cuda._p(lse),
-                              cuda._i(time), cuda._i(heads), cuda._i(kv_heads)],
-                             options=("-DREAL=float", "-DACT_BF16=1"),
-                             grid=((time+15)//16, heads, batch), block=(128, 1, 1))
+        get_runtime().launch(
+            KERNEL,
+            "lm_attention_bf16_d64",
+            q.size,
+            [
+                cuda._p(q),
+                cuda._p(k),
+                cuda._p(v),
+                cuda._p(out),
+                cuda._p(lse),
+                cuda._i(time),
+                cuda._i(heads),
+                cuda._i(kv_heads),
+            ],
+            options=("-DREAL=float", "-DACT_BF16=1"),
+            grid=((time + 15) // 16, heads, batch),
+            block=(128, 1, 1),
+        )
         return out, lse
     return _attention_warp(q, k, v, batch, time, heads, kv_heads, dim)
 
 
 def _attention_warp(q, k, v, batch, time, heads, kv_heads, dim):
-    if len({q.dtype, k.dtype, v.dtype}) != 1: raise ValueError("Attention 的 Q/K/V 精度必须一致")
+    if len({q.dtype, k.dtype, v.dtype}) != 1:
+        raise ValueError("Attention 的 Q/K/V 精度必须一致")
     out, lse = (
         cuda.CUDAStorage(q.size, q.dtype),
         cuda.CUDAStorage(batch * time * heads, _acc_dtype(q.dtype)),
@@ -250,6 +278,10 @@ def _attention_warp(q, k, v, batch, time, heads, kv_heads, dim):
 
 
 def attention_backward(gradient, q, k, v, out, lse, batch, time, heads, kv_heads, dim):
+    if len(
+        {gradient.dtype, q.dtype, k.dtype, v.dtype, out.dtype}
+    ) != 1 or lse.dtype != _acc_dtype(q.dtype):
+        raise ValueError("Attention 反向的激活和梯度精度必须一致，LSE 使用累加精度")
     dq = cuda.CUDAStorage(q.size, q.dtype)
     dk = cuda.CUDAStorage(k.size, k.dtype)
     dv = cuda.CUDAStorage(v.size, v.dtype)
@@ -267,6 +299,40 @@ def attention_backward(gradient, q, k, v, out, lse, batch, time, heads, kv_heads
         block=True,
         block_size=32,
     )
+    if (
+        q.dtype == k.dtype == v.dtype == gradient.dtype == "bfloat16"
+        and dim == 64
+        and time >= 64
+    ):
+        arguments = [
+            cuda._p(gradient),
+            cuda._p(q),
+            cuda._p(k),
+            cuda._p(v),
+            cuda._p(lse),
+            cuda._p(delta),
+        ]
+        dimensions = [cuda._i(time), cuda._i(heads), cuda._i(kv_heads)]
+        runtime = get_runtime()
+        runtime.launch(
+            KERNEL,
+            "lm_attention_bf16_dq",
+            q.size,
+            arguments + [cuda._p(dq)] + dimensions,
+            options=("-DREAL=float", "-DACT_BF16=1"),
+            grid=((time + 15) // 16, heads, batch),
+            block=(128, 1, 1),
+        )
+        runtime.launch(
+            KERNEL,
+            "lm_attention_bf16_dkv",
+            k.size,
+            arguments + [cuda._p(dk), cuda._p(dv)] + dimensions,
+            options=("-DREAL=float", "-DACT_BF16=1"),
+            grid=((time + 15) // 16, kv_heads, batch),
+            block=(128, 1, 1),
+        )
+        return (dq, dk, dv)
     _run(
         "lm_attention_backward_q",
         lse.size,
@@ -302,7 +368,8 @@ def attention_backward(gradient, q, k, v, out, lse, batch, time, heads, kv_heads
 
 
 def routing(scores, rows, experts, top_k):
-    if scores.dtype == "bfloat16": scores = cuda.from_storage(scores, dtype="float32")
+    if scores.dtype == "bfloat16":
+        scores = cuda.from_storage(scores, dtype="float32")
     probs = cuda.softmax(scores, (rows, experts), 1)
     capacity = rows * top_k
     weights, indices = (
@@ -437,16 +504,42 @@ def route_gather_backward(gradient, route, expert, width):
     return result
 
 
+def _pointer_table(values):
+    """小型专家地址表经 kernel 参数写入，避免每层同步 HtoD 复制。"""
+    result = cuda.CUDAStorage(len(values), "int64")
+    for start in range(0, len(values), 8):
+        part = values[start : start + 8]
+        _run(
+            "lm_pointer_table",
+            len(part),
+            cuda._p(result),
+            cuda._i(start),
+            cuda._i(len(part)),
+            *(cuda._i(value) for value in (*part, *([0] * (8 - len(part))))),
+        )
+    return result
+
+
 def combine(outputs, weights, route, width):
     dtype = outputs[0][1].dtype if outputs else weights.dtype
     result = cuda.CUDAStorage(route["rows"] * width, dtype)
     pointers = [0] * route["experts"]
     for expert, values in outputs:
         pointers[expert] = values.ptr
-    addresses = cuda.storage(pointers, dtype="int64")
-    _run("lm_combine_all", result.size, cuda._p(addresses), cuda._p(weights),
-         cuda._p(route["indices"]), cuda._p(route["locations"]), cuda._p(result),
-         cuda._i(result.size), cuda._i(width), cuda._i(route["top_k"]), dtype=dtype)
+    addresses = _pointer_table(pointers)
+    _run(
+        "lm_combine_all",
+        result.size,
+        cuda._p(addresses),
+        cuda._p(weights),
+        cuda._p(route["indices"]),
+        cuda._p(route["locations"]),
+        cuda._p(result),
+        cuda._i(result.size),
+        cuda._i(width),
+        cuda._i(route["top_k"]),
+        dtype=dtype,
+    )
     return result
 
 
@@ -522,14 +615,27 @@ def head_rows_backward(target, gradient, start, count, width, time):
     )
 
 
-def head_loss(logits, labels, rows, vocab):
-    ids = cuda.storage(labels, dtype="int64")
+def prepare_labels(labels):
+    return cuda.storage(labels, dtype="int64")
+
+
+def _head_labels(labels, start, rows):
+    ids = labels if isinstance(labels, cuda.CUDAStorage) else prepare_labels(labels)
+    if ids.dtype != "int64" or start < 0 or start + rows > ids.size:
+        raise ValueError("输出头标签存储或范围无效")
+    pointer = cuda._p(ids)
+    pointer.value += start * 8
+    return ids, pointer
+
+
+def head_loss(logits, labels, rows, vocab, *, start=0):
+    ids, pointer = _head_labels(labels, start, rows)
     values = cuda.CUDAStorage(rows, _acc_dtype(logits.dtype))
     _run(
         "lm_head_loss",
         rows,
         cuda._p(logits),
-        cuda._p(ids),
+        pointer,
         cuda._p(values),
         cuda._i(rows),
         cuda._i(vocab),
@@ -539,13 +645,13 @@ def head_loss(logits, labels, rows, vocab):
     return cuda.sum(values)
 
 
-def head_gradient(logits, labels, rows, vocab, gradient, count):
-    ids = cuda.storage(labels, dtype="int64")
+def head_gradient(logits, labels, rows, vocab, gradient, count, *, start=0):
+    ids, pointer = _head_labels(labels, start, rows)
     _run(
         "lm_head_gradient",
         rows,
         cuda._p(logits),
-        cuda._p(ids),
+        pointer,
         cuda._p(gradient),
         cuda._i(rows),
         cuda._i(vocab),

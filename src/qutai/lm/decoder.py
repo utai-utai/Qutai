@@ -6,7 +6,16 @@ from ..core.migration import move
 from ..core.shape import flatten_indices, infer_shape
 from ..core.tensor import Tensor
 from .config import Config
-from .layers import Block, Projection, RMSNorm, embed, linear, projection_loss, unpack
+from .layers import (
+    Block,
+    Projection,
+    RMSNorm,
+    backend,
+    embed,
+    linear,
+    projection_loss,
+    unpack,
+)
 from .recompute import checkpoint
 
 
@@ -150,9 +159,17 @@ class Decoder:
         ):
             raise ValueError("标签必须是词表编号或 -100")
         with set_recording(train), set_training(train):
+            # 标签在 Transformer 计算之前上传一次；输出头前后向复用同一缓冲。
+            prepared_labels = backend(self.embedding.weight).prepare_labels(
+                tuple(label for row in labels for label in row[1:])
+            )
             hidden = self.hidden(tokens, train=train)
             self.last_lm_loss = projection_loss(
-                hidden, self.embedding.weight, labels, chunk_size
+                hidden,
+                self.embedding.weight,
+                labels,
+                chunk_size,
+                prepared_labels=prepared_labels,
             )
             return (
                 self.last_lm_loss + self.config.aux_loss_coef * self.last_auxiliary_loss

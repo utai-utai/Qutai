@@ -340,9 +340,14 @@ def head_rows_backward(target, gradient, start, count, width, time):
             target[at * width + j] += gradient[row * width + j]
 
 
-def head_loss(logits, labels, rows, vocab):
+def prepare_labels(labels):
+    return tuple(labels)
+
+
+def head_loss(logits, labels, rows, vocab, *, start=0):
     result = 0.0
-    for row, label in enumerate(labels):
+    for row in range(rows):
+        label = labels[start + row]
         if label == -100:
             continue
         peak = max((logits[row * vocab + j] for j in range(vocab)))
@@ -352,8 +357,9 @@ def head_loss(logits, labels, rows, vocab):
     return cpu.storage([result], dtype=logits.dtype)
 
 
-def head_gradient(logits, labels, rows, vocab, gradient, count):
-    for row, label in enumerate(labels):
+def head_gradient(logits, labels, rows, vocab, gradient, count, *, start=0):
+    for row in range(rows):
+        label = labels[start + row]
         peak = max((logits[row * vocab + j] for j in range(vocab)))
         total = sum((exp(logits[row * vocab + j] - peak) for j in range(vocab)))
         for j in range(vocab):

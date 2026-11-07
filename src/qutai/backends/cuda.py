@@ -101,6 +101,9 @@ def storage(values: Iterable = (), *, dtype="float64"):
         bits = (struct.unpack("<I", struct.pack("<f", value))[0] for value in values)
         values = ((value >> 16) | 0x40 if value & 0x7FFFFFFF > 0x7F800000 else (value + 0x7FFF + ((value >> 16) & 1)) >> 16 for value in bits)
     buffer = array(_TYPES[dtype][0], values)
+    if len(buffer) == 1 and dtype in ("float32", "float64", "int64"):
+        # 标量由同流 fill 排队，避免很小的 HtoD 复制等待此前全部计算。
+        return full(1, buffer[0], dtype=dtype)
     result = CUDAStorage(len(buffer) // parts, dtype)
     result.runtime.upload(result.ptr, buffer)
     return result
@@ -310,11 +313,18 @@ def gemm(left, right, rows, inner, cols, *, batch=1, transpose_left=False, trans
     for macro, value in (("A_BF16", left.dtype), ("B_BF16", right.dtype), ("OUT_BF16", dtype)):
         if value == "bfloat16":
             options.append("-D" + macro)
-    tile = 64 if mixed else 32
+    tile_m = tile_n = 64 if mixed else 32
+    name = "gemm_bf16" if mixed else "gemm_tiled"
+    block = (128, 1, 1) if mixed else (16, 16, 1)
+    if mixed and inner >= 128:
+        if (rows >= 1024 and cols >= 1024) or (rows >= 128 and cols >= 8192):
+            name, tile_m, tile_n, block = "gemm_bf16_wide", 128, 128, (256, 1, 1)
+        elif 128 <= rows <= 256 and inner >= 8192 and cols >= 1024:
+            name, tile_m, tile_n, block = "gemm_bf16_long", 128, 64, (256, 1, 1)
     args = [_p(left), _p(right), _p(result), *(_i(x) for x in (rows, inner, cols, sa, sb, transpose_left, transpose_right, accumulate))]
-    runtime.launch(Path(__file__).parent / "kernels/gemm.cu", "gemm_bf16" if mixed else "gemm_tiled", size, args,
-                   options=tuple(options), grid=((cols + tile - 1) // tile, (rows + tile - 1) // tile, batch),
-                   block=(128, 1, 1) if mixed else (16, 16, 1))
+    runtime.launch(Path(__file__).parent / "kernels/gemm.cu", name, size, args,
+                   options=tuple(options), grid=((cols + tile_n - 1) // tile_n, (rows + tile_m - 1) // tile_m, batch),
+                   block=block)
     if mixed:
         runtime.tensor_core_launches += 1
     return result
