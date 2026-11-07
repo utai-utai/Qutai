@@ -1,5 +1,3 @@
-"""卷积和最大池化的手算结果、任意输出梯度与预测模式。"""
-
 import unittest
 from math import prod
 from random import Random

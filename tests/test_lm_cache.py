@@ -1,5 +1,3 @@
-"""增量续写与完整前向的一致性、计算量及缓存生命周期。"""
-
 import json
 import random
 import unittest

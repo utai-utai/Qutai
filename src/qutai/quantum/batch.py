@@ -1,5 +1,3 @@
-"""批量量子层与共同实数反向引擎之间的内部连接。"""
-
 from functools import partial
 
 from ..backends import cuda_quantum

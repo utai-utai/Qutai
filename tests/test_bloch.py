@@ -1,5 +1,3 @@
-"""Bloch 球的方向、单比特约化态及独立 SVG。"""
-
 import unittest
 from cmath import exp
 from math import cos, pi, sin

@@ -1,5 +1,3 @@
-"""解码器的专用运算与层；前向和局部反向保持在一起。"""
-
 from math import prod, sqrt
 from ..backends import cpu_lm, cuda_lm
 from ..backends.device import get_backend
@@ -187,7 +185,7 @@ def unpack(packed, shape):
 def projection_loss(hidden, weight, labels, chunk_size, *, prepared_labels=None):
     b = backend(hidden)
     base = get_backend(hidden.device)
-    batch, time, width = hidden.shape
+    _, time, width = hidden.shape
     vocab = weight.shape[0]
     precision = matmul_precision()
     targets = tuple((label for row in labels for label in row[1:]))
@@ -197,8 +195,7 @@ def projection_loss(hidden, weight, labels, chunk_size, *, prepared_labels=None)
     count = max(1, sum((label != -100 for label in targets)))
     result = base.full(1, dtype=hidden.dtype)
     for start in range(0, len(targets), chunk_size):
-        part = targets[start : start + chunk_size]
-        rows = len(part)
+        rows = min(chunk_size, len(targets) - start)
         inputs = b.head_rows(hidden.storage, start, rows, width, time)
         logits = b.gemm(
             inputs,
@@ -217,8 +214,7 @@ def projection_loss(hidden, weight, labels, chunk_size, *, prepared_labels=None)
             dx = base.full(hidden.size, dtype=hidden.dtype)
             dw = base.full(weight.size, dtype=weight.dtype)
             for start in range(0, len(targets), chunk_size):
-                part = targets[start : start + chunk_size]
-                rows = len(part)
+                rows = min(chunk_size, len(targets) - start)
                 inputs = b.head_rows(hidden.storage, start, rows, width, time)
                 logits = b.gemm(
                     inputs,
@@ -349,11 +345,7 @@ class GQA:
 
     def parameters(self):
         return tuple(
-            (
-                p
-                for layer in (self.q, self.k, self.v, self.out)
-                for p in layer.parameters()
-            )
+            p for layer in (self.q, self.k, self.v, self.out) for p in layer.parameters()
         )
 
 
@@ -451,9 +443,5 @@ class Block:
 
     def parameters(self):
         return tuple(
-            (
-                p
-                for layer in (self.attn_norm, self.ffn_norm, self.attn, self.ffn)
-                for p in layer.parameters()
-            )
+            p for layer in (self.attn_norm, self.ffn_norm, self.attn, self.ffn) for p in layer.parameters()
         )

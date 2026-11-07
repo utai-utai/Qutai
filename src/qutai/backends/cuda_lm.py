@@ -1,5 +1,3 @@
-"""语言模型 CUDA 调度；路由索引和数值计算均留在显存。"""
-
 from array import array
 from pathlib import Path
 from . import cuda

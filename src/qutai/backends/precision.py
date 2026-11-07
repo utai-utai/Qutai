@@ -1,5 +1,3 @@
-"""计算精度上下文；不依赖 Tensor 或自动求导状态。"""
-
 from contextvars import ContextVar
 
 _matmul_precision = ContextVar("qutai_matmul_precision", default=None)

@@ -1,5 +1,3 @@
-"""局部厄米算符的组合、振幅作用和数值快照。"""
-
 import unittest
 from math import sqrt
 

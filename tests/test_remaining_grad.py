@@ -1,5 +1,3 @@
-"""验证二元、归约、形状变换与二维矩阵乘法的反向规则。"""
-
 import unittest
 from collections.abc import Callable
 

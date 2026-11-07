@@ -1,5 +1,3 @@
-"""单流 CUDA 后端；仅在实际使用设备时加载 Driver/NVRTC。"""
-
 from array import array
 from collections.abc import Iterable
 from ctypes import c_uint64, c_longlong, c_float, c_double

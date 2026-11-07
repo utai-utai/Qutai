@@ -1,5 +1,3 @@
-"""Tensor 的自然语法、基本索引和共享参数保持同一套自动求导行为。"""
-
 import unittest
 
 import qutai as qt

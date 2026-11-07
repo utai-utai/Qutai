@@ -1,5 +1,3 @@
-"""优化器更新、参数共享、迭代输入和梯度生命周期。"""
-
 import unittest
 
 import qutai as qt

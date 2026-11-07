@@ -1,5 +1,3 @@
-"""QAOA 成本相位、混合演化、共享角度梯度与两步优化。"""
-
 import random
 import unittest
 from cmath import exp

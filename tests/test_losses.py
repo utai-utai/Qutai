@@ -1,5 +1,3 @@
-"""均方误差的数值、梯度和输入输出约定。"""
-
 import unittest
 
 from qutai import Tensor, nn

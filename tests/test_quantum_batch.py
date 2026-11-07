@@ -1,5 +1,3 @@
-"""批量量子层：序列维、共享权重、分块及无逐token电路回退。"""
-
 import unittest
 from unittest.mock import patch
 

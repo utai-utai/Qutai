@@ -1,5 +1,3 @@
-"""公共设备/精度接口；数值检查在 CPU 上执行，不代替实际 GPU 验证。"""
-
 import json
 import math
 import unittest

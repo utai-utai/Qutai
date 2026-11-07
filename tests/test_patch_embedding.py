@@ -1,5 +1,3 @@
-"""图片 patch 的排列、位置嵌入的梯度累加，以及序列汇总。"""
-
 import random
 import unittest
 from math import prod

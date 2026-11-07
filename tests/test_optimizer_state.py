@@ -1,5 +1,3 @@
-"""优化器 JSON 状态恢复，以及中断训练后的数值一致性。"""
-
 import json
 import tempfile
 import unittest

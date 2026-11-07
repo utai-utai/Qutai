@@ -1,5 +1,3 @@
-"""量子电路和计算基概率的独立 SVG 展示。"""
-
 import unittest
 from math import pi
 from pathlib import Path

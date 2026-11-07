@@ -1,5 +1,3 @@
-"""模块依赖图与不依赖具体 Tensor 的底层运算契约。"""
-
 import ast
 import unittest
 from graphlib import CycleError, TopologicalSorter

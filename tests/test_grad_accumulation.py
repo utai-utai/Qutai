@@ -1,5 +1,3 @@
-"""微批梯度流式累加、别名隔离与峰值存储回归。"""
-
 import gc
 import unittest
 import weakref

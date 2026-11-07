@@ -1,5 +1,3 @@
-"""伴随求导、参数移位与独立有限差分，以及线性的电路遍历次数。"""
-
 import unittest
 from math import cos, sin
 from unittest.mock import patch

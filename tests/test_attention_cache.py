@@ -1,5 +1,3 @@
-"""因果注意力的逐段缓存、位置偏移与原有训练行为。"""
-
 import unittest
 from unittest.mock import patch
 

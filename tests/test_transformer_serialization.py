@@ -1,5 +1,3 @@
-"""Transformer 层的结构、共享参数、旧注意力存档与训练续接。"""
-
 import json
 import unittest
 from math import exp, sqrt

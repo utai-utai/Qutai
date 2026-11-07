@@ -1,5 +1,3 @@
-"""组合观测量与多结果读出：数值、向量反向和共享状态模拟。"""
-
 import unittest
 from math import cos, isfinite, sin, sqrt
 from unittest.mock import patch

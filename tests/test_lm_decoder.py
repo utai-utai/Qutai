@@ -1,5 +1,3 @@
-"""解码器数值、分块损失、重计算与真实 GPU 路径。"""
-
 import gc
 import math
 from pathlib import Path

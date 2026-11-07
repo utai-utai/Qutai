@@ -1,5 +1,3 @@
-"""同一电路比较伴随与参数移位的梯度，以及一次前向加反向的耗时。"""
-
 import platform
 import sys
 from random import Random

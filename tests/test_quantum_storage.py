@@ -1,5 +1,3 @@
-"""量子复数存储、纯数值出口与端到端反向的存储边界。"""
-
 import unittest
 from array import array
 from math import sqrt

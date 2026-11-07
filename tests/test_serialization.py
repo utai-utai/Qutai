@@ -1,5 +1,3 @@
-"""参数保存、加载、结构匹配与训练续接。"""
-
 import json
 import unittest
 from pathlib import Path

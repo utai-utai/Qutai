@@ -1,5 +1,3 @@
-"""量子态的位序、局部门、概率、独立采样与测量坍缩。"""
-
 import random
 import unittest
 from cmath import exp

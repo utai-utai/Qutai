@@ -1,5 +1,3 @@
-"""真实 GPU 的异步生命周期、分块 GEMM、混合精度与优化器状态。"""
-
 import gc
 import math
 from pathlib import Path

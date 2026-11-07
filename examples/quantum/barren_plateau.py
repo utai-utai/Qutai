@@ -1,5 +1,3 @@
-"""用固定电路、多组初始化测量梯度分布；仅标准库与 qutai。"""
-
 import argparse
 import json
 from math import cos, isfinite, log10, pi, prod, sin, sqrt
@@ -112,7 +110,7 @@ def variance_plot(rows):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="PQC 初始化梯度统计")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--dtype", choices=("float32", "float64"), default="float32")
     parser.add_argument("--qubits", type=int, nargs="+", default=[2, 4, 6, 8])

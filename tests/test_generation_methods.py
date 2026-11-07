@@ -1,5 +1,3 @@
-"""生成方法的解析路径、随机状态与逐步采样上下文，不运行训练。"""
-
 import random
 import unittest
 from math import cos, pi, sqrt

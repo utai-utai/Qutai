@@ -1,5 +1,3 @@
-"""CUDA 实卡量子前向、局部反向和两步混合训练；不能用 CPU 代算。"""
-
 import unittest
 from math import cos, sin, sqrt
 from unittest.mock import patch

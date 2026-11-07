@@ -1,5 +1,3 @@
-"""训练状态、缓存和模型文件统一经过数值存储接口。"""
-
 import json
 import unittest
 from pathlib import Path

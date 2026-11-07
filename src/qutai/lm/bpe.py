@@ -1,5 +1,3 @@
-"""读取 ByteLevel BPE tokenizer.json；编码只使用 Python 标准库。"""
-
 import hashlib
 import heapq
 import json

@@ -1,5 +1,3 @@
-"""模型组合、共享参数和训练/预测模式。"""
-
 import unittest
 
 import qutai as qt

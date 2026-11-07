@@ -1,5 +1,3 @@
-"""标准库 ctypes 封装的单流 CUDA Driver / NVRTC 运行时；导入时不加载原生库。"""
-
 import atexit
 import ctypes
 import ctypes.util

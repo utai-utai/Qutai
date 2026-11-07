@@ -1,5 +1,3 @@
-"""整数查表、重复编号梯度和嵌入层的参数保存。"""
-
 import json
 import random
 import unittest

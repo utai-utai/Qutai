@@ -1,5 +1,3 @@
-"""线性层的形状、初始化、梯度和参数管理。"""
-
 import random
 import unittest
 

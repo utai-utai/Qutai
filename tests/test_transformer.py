@@ -1,5 +1,3 @@
-"""多头注意力、因果约束和 Transformer 组合层的数学与梯度。"""
-
 import math
 import unittest
 

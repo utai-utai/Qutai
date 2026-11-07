@@ -1,5 +1,3 @@
-"""真实 CUDA 数值、反向和优化器对照；无 CUDA 的 CI 跳过实卡用例。"""
-
 from pathlib import Path
 import subprocess
 import sys

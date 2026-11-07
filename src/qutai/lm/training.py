@@ -1,5 +1,3 @@
-"""小而明确的 LM 训练循环；模型、优化器和 checkpoint 可以分别使用。"""
-
 from math import cos, isfinite, pi
 from sys import float_info
 

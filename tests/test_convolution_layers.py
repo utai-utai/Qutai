@@ -1,5 +1,3 @@
-"""卷积、池化、展平层的组合训练与模型保存。"""
-
 import json
 import random
 import unittest

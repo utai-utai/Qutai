@@ -1,5 +1,3 @@
-"""残差模型、BatchNorm 运行统计和共享参数的保存与训练续接。"""
-
 import json
 import unittest
 from pathlib import Path

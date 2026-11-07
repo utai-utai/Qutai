@@ -1,5 +1,3 @@
-"""任意批次/序列轴交叉熵的数值、梯度和整数标签约定。"""
-
 import unittest
 from math import log
 

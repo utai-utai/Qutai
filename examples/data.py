@@ -1,5 +1,3 @@
-"""示例的数据集读取与预处理；像素保留为字节，只在取样时转为 Tensor。"""
-
 import gzip
 import struct
 import sys
@@ -8,7 +6,6 @@ from collections.abc import Sequence
 from math import prod
 from pathlib import Path
 from ssl import create_default_context
-from typing import overload
 from urllib.request import urlopen
 
 from qutai import Tensor
@@ -36,12 +33,6 @@ class Images(Sequence[Tensor]):
 
     def __len__(self) -> int:
         return len(self.pixels) // self.size
-
-    @overload
-    def __getitem__(self, index: int) -> Tensor: ...
-
-    @overload
-    def __getitem__(self, index: slice) -> list[Tensor]: ...
 
     def __getitem__(self, index: int | slice) -> Tensor | list[Tensor]:
         if isinstance(index, slice): return [self[item] for item in range(*index.indices(len(self)))]

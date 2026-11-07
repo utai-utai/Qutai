@@ -1,5 +1,3 @@
-"""BatchNorm、残差分支和全局平均池化的数值、梯度与模式。"""
-
 import unittest
 from math import sqrt
 

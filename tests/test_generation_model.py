@@ -1,5 +1,3 @@
-"""生成包装模型的训练接口、无副作用采样和完整/原地加载。"""
-
 import json
 import unittest
 from math import isfinite

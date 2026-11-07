@@ -1,5 +1,3 @@
-"""精确期望值、逐门参数移位、经典计算图连接与两步训练。"""
-
 import unittest
 from math import cos, sin, sqrt
 

@@ -1,5 +1,3 @@
-"""真实 BF16 GEMM、混合输入与持久输出的 CUDA 验证。"""
-
 import math
 import struct
 import unittest

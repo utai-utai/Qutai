@@ -1,5 +1,3 @@
-"""D64 BF16 注意力反向：因果、GQA、余块和确定性。"""
-
 import math
 import unittest
 from unittest.mock import patch

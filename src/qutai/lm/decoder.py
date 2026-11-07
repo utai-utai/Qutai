@@ -1,5 +1,3 @@
-"""可从零训练的 Dense/MoE 语言模型；保留教学 lm.Model。"""
-
 from ..core.context import set_recording, set_training
 from ..backends.device import get_backend
 from ..core.migration import move

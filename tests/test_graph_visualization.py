@@ -1,5 +1,3 @@
-"""无向图、MaxCut 分组与独立 SVG 保存。"""
-
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory

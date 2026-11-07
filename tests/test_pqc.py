@@ -1,5 +1,3 @@
-"""随机结构固定的 PQC、批次梯度和经典量子混合网络。"""
-
 import random
 import unittest
 from math import isfinite, pi

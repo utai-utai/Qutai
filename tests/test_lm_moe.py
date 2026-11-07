@@ -1,5 +1,3 @@
-"""稀疏专家的路由、辅助损失与前向/反向对照。"""
-
 import unittest
 from unittest.mock import patch
 

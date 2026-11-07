@@ -1,5 +1,3 @@
-"""语言模型专用 CPU 参考内核；CUDA 不调用这些计算。"""
-
 from math import cos, exp, log, sin, sqrt
 from random import Random
 from . import cpu

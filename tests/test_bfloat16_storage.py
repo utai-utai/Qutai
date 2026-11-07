@@ -1,5 +1,3 @@
-"""真正两字节 CUDA BF16 存储、转换与基础反向。"""
-
 import math
 import struct
 import unittest

@@ -1,5 +1,3 @@
-"""批归一化状态加载失败的原子性，以及预测统计与求导的独立性。"""
-
 import json
 import unittest
 from pathlib import Path

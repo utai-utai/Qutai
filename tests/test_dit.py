@@ -1,5 +1,3 @@
-"""像素 DiT 的 patch 复原、时间条件和非零调制下的数值梯度。"""
-
 import math
 import random
 import unittest

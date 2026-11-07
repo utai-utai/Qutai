@@ -1,5 +1,3 @@
-"""只读 mmap token 分片和可恢复批次；语言模型自己执行一次 next-token shift。"""
-
 import hashlib
 import json
 import math

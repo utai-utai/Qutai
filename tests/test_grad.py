@@ -1,5 +1,3 @@
-"""反向传播：手算、有限差分、共享图、广播和逐元素链式计算。"""
-
 import unittest
 from dataclasses import dataclass
 from typing import get_type_hints

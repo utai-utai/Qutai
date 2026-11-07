@@ -1,5 +1,3 @@
-"""DiT 结构、时间编码、共享参数与原地加载。"""
-
 import copy
 import json
 import unittest

@@ -1,5 +1,3 @@
-"""新增轴的组合、输出类别、共享输入和高维反向传播。"""
-
 import unittest
 
 import qutai as qt

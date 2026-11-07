@@ -1,5 +1,3 @@
-"""LM 激活真正占两字节；归约、损失及可训练参数保持 FP32。"""
-
 import unittest
 from random import Random
 from unittest.mock import patch

@@ -1,5 +1,3 @@
-"""可复用数据流、逐轮打乱与训练进度；全部使用小型离线数据。"""
-
 import random
 import unittest
 from contextlib import redirect_stdout

@@ -1,5 +1,3 @@
-"""全局梯度裁剪的数值结果、共享参数与梯度生命周期。"""
-
 import math
 import unittest
 

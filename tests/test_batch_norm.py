@@ -1,5 +1,3 @@
-"""批归一化的逐通道统计、训练/预测梯度与运行状态。"""
-
 import math
 import unittest
 

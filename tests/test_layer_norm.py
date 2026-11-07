@@ -1,5 +1,3 @@
-"""最后一轴的层归一化、参数梯度和前向快照。"""
-
 import math
 import unittest
 from math import prod

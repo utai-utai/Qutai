@@ -1,5 +1,3 @@
-"""输出头复用完整标签缓冲区，避免分块前后向反复上传。"""
-
 from array import array
 import math
 import unittest

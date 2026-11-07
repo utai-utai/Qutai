@@ -1,5 +1,3 @@
-"""实际 CUDA 的 CNN、归一化及局部反向数值对照；无设备时跳过。"""
-
 from contextlib import contextmanager, ExitStack
 from math import prod
 from random import Random

@@ -1,5 +1,3 @@
-"""标准库 LM 训练入口；输出目录独立，恢复必须显式 --resume。"""
-
 import argparse
 import json
 import math
@@ -13,7 +11,7 @@ from qutai.lm.bpe import SPECIAL_TOKENS
 
 
 def arguments():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="LM 训练与恢复")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path, required=True)
     parser.add_argument(

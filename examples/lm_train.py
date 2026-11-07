@@ -1,5 +1,3 @@
-"""兼容旧命令；主实现位于 examples/lm/train.py。"""
-
 from pathlib import Path
 import runpy
 

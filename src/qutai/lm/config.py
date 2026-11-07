@@ -1,5 +1,3 @@
-"""Dense/MoE 解码器配置；参数预算不需要先分配模型。"""
-
 from dataclasses import asdict, dataclass
 from math import isfinite
 

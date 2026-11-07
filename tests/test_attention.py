@@ -1,5 +1,3 @@
-"""单头注意力的数学结果、数值梯度与模型持久化。"""
-
 import math
 import unittest
 from pathlib import Path

@@ -1,5 +1,3 @@
-"""分类所需运算的数值、梯度、整数输出与模型读写。"""
-
 import math as scalar_math
 import unittest
 from pathlib import Path

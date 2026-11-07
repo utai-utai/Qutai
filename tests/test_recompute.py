@@ -1,5 +1,3 @@
-"""激活重计算与计算图释放的语义检查。"""
-
 import unittest
 import weakref
 import gc

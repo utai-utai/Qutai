@@ -1,5 +1,3 @@
-"""CUDA 空形状、重复索引、稳定损失、精度转换与显存生命周期。"""
-
 import gc
 from math import hypot, isfinite
 import unittest

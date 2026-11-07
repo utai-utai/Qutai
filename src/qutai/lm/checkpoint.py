@@ -1,5 +1,3 @@
-"""流式二进制训练 checkpoint：先完整写分片，最后原子发布 manifest。"""
-
 import hashlib
 import json
 import os

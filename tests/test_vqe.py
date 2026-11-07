@@ -1,5 +1,3 @@
-"""两量子比特 VQE：已知能量、解析梯度及两步 Notebook 实验。"""
-
 import unittest
 from math import cos, pi, sin, sqrt
 

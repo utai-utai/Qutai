@@ -1,5 +1,3 @@
-"""续写采样的分布、随机状态、上下文与保存恢复。"""
-
 import random
 import unittest
 from bisect import bisect

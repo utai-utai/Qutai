@@ -1,5 +1,3 @@
-"""字符词表顺序、整数编号和语言模型训练窗口。"""
-
 import json
 import random
 import unittest

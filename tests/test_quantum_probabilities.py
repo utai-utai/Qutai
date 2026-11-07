@@ -1,5 +1,3 @@
-"""可求导概率：边缘分布顺序、两种反向规则和独立数值梯度。"""
-
 import unittest
 from math import cos, sin
 from unittest.mock import patch

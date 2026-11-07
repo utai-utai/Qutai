@@ -1,5 +1,3 @@
-"""验证公共接口、模块拆分后的导入与数值行为。"""
-
 import unittest
 from typing import get_type_hints
 

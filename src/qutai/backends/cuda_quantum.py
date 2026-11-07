@@ -1,5 +1,3 @@
-"""共享电路计划的批量 PQC；按 token 分块，状态向量不进入持久计算图。"""
-
 from functools import lru_cache
 
 from .cuda import CUDAStorage, _launch, _p, _i, full, storage

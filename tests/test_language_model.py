@@ -1,5 +1,3 @@
-"""字符语言模型的因果计算、参数梯度、续写和完整持久化。"""
-
 import copy
 import json
 import unittest

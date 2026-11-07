@@ -1,5 +1,3 @@
-"""层的并联相加、ResNetBlock 与原组合等价，以及模型读写。"""
-
 import json
 import unittest
 from pathlib import Path

@@ -1,5 +1,3 @@
-"""Tensor 的存储所有权、计算结果与反向传播数据边界。"""
-
 import unittest
 from unittest.mock import patch
 

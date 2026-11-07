@@ -1,5 +1,3 @@
-"""确定性函数的激活重计算：前向只保留边界，反向重新建立局部计算图。"""
-
 from collections.abc import Callable, Iterable
 from functools import partial
 

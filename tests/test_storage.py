@@ -1,5 +1,3 @@
-"""连续 CPU 存储、后端边界与复数数值内核。"""
-
 import math
 import unittest
 from array import array

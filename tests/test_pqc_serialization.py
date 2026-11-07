@@ -1,5 +1,3 @@
-"""PQC 的实际随机门结构、权重共享与已有模型载入。"""
-
 import json
 import unittest
 from pathlib import Path

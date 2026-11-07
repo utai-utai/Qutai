@@ -1,5 +1,3 @@
-"""模型与优化器配对恢复，核对两次更新及小语言模型的训练流程。"""
-
 import json
 import unittest
 from math import isfinite, sqrt

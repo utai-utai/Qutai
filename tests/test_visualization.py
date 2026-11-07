@@ -1,5 +1,3 @@
-"""标准库可视化的文件输出、转义、PNG 兼容与网络分支。"""
-
 import csv
 import unittest
 from math import isfinite

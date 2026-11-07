@@ -1,5 +1,3 @@
-"""AdamW 独立手算、缺失梯度与参数共享。"""
-
 import math
 import unittest
 

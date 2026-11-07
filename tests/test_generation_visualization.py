@@ -1,5 +1,3 @@
-"""生成状态的只读显示映射，以及不依赖外部资源的图像网格。"""
-
 import re
 import unittest
 from base64 import b64decode

@@ -1,5 +1,3 @@
-"""向量、批量广播、空维度和矩阵乘法梯度。"""
-
 import unittest
 from math import prod
 
