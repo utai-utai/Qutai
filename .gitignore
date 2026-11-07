@@ -16,3 +16,7 @@ dist/
 
 # Local scratch script
 /main.py
+
+# Generated outputs of grouped examples
+/examples/**/runs/
+/runs/

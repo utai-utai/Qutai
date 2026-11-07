@@ -54,7 +54,7 @@ print(state.probabilities())  # 约 [0.5, 0.0, 0.0, 0.5]
 
 ## 示例与开发
 
-[Notebook 示例](https://github.com/utai-utai/Qutai/blob/main/examples/README.md)涵盖回归、Iris、LeNet、ResNet、ViT、语言模型、DiT、Bell 态、混合网络、VQE 和 QAOA。量子训练支持伴随求导与参数移位对照；多数较大模型仅训练两步验证流程。
+[Notebook 示例](examples/README.md)按 [神经网络](examples/nn/README.md)、[扩散生成](examples/generation/README.md)、[语言模型](examples/lm/README.md)、[量子计算](examples/quantum/README.md) 四组组织。包括回归、Iris、LeNet/ResNet、DiT、Dense/MoE 训练恢复、Bell/VQE/QAOA，以及多 seed 的 PQC barren plateau 梯度实验。
 
 从源码安装并运行测试：
 
@@ -129,4 +129,4 @@ CUDA 内核在同一默认 stream 异步排队，显存缓存按同流顺序复�
 
 量子 `qnn.PQC` 的 CUDA 路径按批次处理 `(..., qubits)`，用共享执行计划、GPU 伴随反向和工作态分块；每个样本仍是独立量子态。该接口不预设跨 token 的量子记忆结构。状态空间仍按 `2**qubits` 增长，批处理不改变这一规模关系。
 
-示例命令行 `examples/lm_train.py` 与三个结构配置提供新训练、完整更新边界保存和显式恢复。安装包携带所有自写 CUDA 源码；PyTorch / tokenizers 只用于独立测试对照，不是 SDK 运行依赖。
+示例命令行 `examples/lm/train.py` 与同目录 `configs` 的三个结构配置提供新训练、完整更新边界保存和显式恢复。安装包携带所有自写 CUDA 源码；PyTorch / tokenizers 只用于独立测试对照，不是 SDK 运行依赖。

@@ -2,7 +2,7 @@
 
 ## Iris
 
-`iris.csv` 用于 `examples/classification.ipynb`，包含 150 条记录，每个品种各 50 条。数据来源为 [UCI Machine Learning Repository：Iris](https://archive.ics.uci.edu/dataset/53/iris)，采用 [CC BY 4.0 许可](https://creativecommons.org/licenses/by/4.0/)。
+`iris.csv` 用于 `examples/nn/iris.ipynb`，包含 150 条记录，每个品种各 50 条。数据来源为 [UCI Machine Learning Repository：Iris](https://archive.ics.uci.edu/dataset/53/iris)，采用 [CC BY 4.0 许可](https://creativecommons.org/licenses/by/4.0/)。
 
 引用：Fisher, R. (1936). *Iris* [Dataset]. UCI Machine Learning Repository. [DOI: 10.24432/C56C76](https://doi.org/10.24432/C56C76)。
 
@@ -20,7 +20,7 @@ Notebook 将三个品种依次编码为 `0`、`1`、`2`。本地 CSV 保留原�
 
 ## MNIST
 
-`examples/lenet.ipynb` 通过 `examples/datasets.py` 读取 MNIST 手写数字。原数据有 60000 张训练图像、10000 张独立测试图像，图像均为 28×28 的单通道字节图像，标签为数字 0–9。
+`examples/nn/lenet.ipynb` 通过 `examples/datasets.py` 读取 MNIST 手写数字。原数据有 60000 张训练图像、10000 张独立测试图像，图像均为 28×28 的单通道字节图像，标签为数字 0–9。
 
 本地直接保留 MNIST 原始 IDX 压缩文件。`load_mnist("train")` 和 `load_mnist("test")` 自动选择对应的训练、测试文件；已有缓存时可离线读取，缺失时才下载，无需手动传入文件路径或转换数据格式。
 
@@ -37,7 +37,7 @@ Notebook 使用训练、测试文件各自的固定前缀子集，不将训练�
 
 ## CIFAR-10
 
-`examples/resnet.ipynb` 使用 [CIFAR-10 官方数据](https://cave.cs.toronto.edu/kriz/cifar.html)，由 Alex Krizhevsky、Vinod Nair、Geoffrey Hinton 创建。原数据包含 50000 张训练图像和 10000 张独立测试图像，均为 32×32 RGB 图像。官方引用为 Alex Krizhevsky (2009), *Learning Multiple Layers of Features from Tiny Images*，详见官方页面的 Reference。
+`examples/nn/resnet.ipynb` 使用 [CIFAR-10 官方数据](https://cave.cs.toronto.edu/kriz/cifar.html)，由 Alex Krizhevsky、Vinod Nair、Geoffrey Hinton 创建。原数据包含 50000 张训练图像和 10000 张独立测试图像，均为 32×32 RGB 图像。官方引用为 Alex Krizhevsky (2009), *Learning Multiple Layers of Features from Tiny Images*，详见官方页面的 Reference。
 
 `load_cifar10("train")` 或 `load_cifar10("test")` 自动缓存官方 binary 版本的 `cifar-10-binary.tar.gz`，目录为 `cifar10/`。官方公布的 MD5 为 `c32a1d4ab5d03f1284b67883e8d87530`。训练集来自 `data_batch_1.bin` 到 `data_batch_5.bin`，测试集来自独立的 `test_batch.bin`；读取时只通过 `tarfile.extractfile` 访问指定成员，不将压缩包全部解压到磁盘。
 
@@ -50,4 +50,4 @@ Notebook 使用训练、测试文件各自的固定前缀子集，不将训练�
 
 ## 字符语言模型示例
 
-`language.txt` 是为 `examples/language_model.ipynb` 编写的原创短中文语料，共 180 个字符（包括换行）。无需下载或外部数据包；词表按字符首次出现的顺序建立。示例只训练两步，用于验证整数编码、移位标签、因果网络、反向传播和逐字生成。
+`language.txt` 是为 `examples/lm/language_model.ipynb` 编写的原创短中文语料，共 180 个字符（包括换行）。无需下载或外部数据包；词表按字符首次出现的顺序建立。示例只训练两步，用于验证整数编码、移位标签、因果网络、反向传播和逐字生成。

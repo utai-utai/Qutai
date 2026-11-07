@@ -1,52 +1,39 @@
-# qutai 教学示例
+# Qutai 示例
 
-在 PyCharm 选择项目的 Python 3.14 环境，以 `examples` 为工作目录，从上到下执行单元格。这样可以直接读取 `data/`，图片示例也能直接导入同目录的 `datasets.py`。
+示例按四条学习路线组织，全部只使用 Python 标准库与 Qutai。先在项目根目录用 Python 3.14 环境执行 `python -m pip install -e .`，再在 PyCharm 或 Jupyter 中从上到下运行 Notebook。
 
-经典模型示例按「看数据 → 搭模型 → 训练 → 预测／可视化」展开。训练循环显式保留清梯度、损失、反向传播和更新参数四步；可视化统一通过 `visualization` 调用。代码只使用标准库和 qutai。
-
-十四个 Notebook 的首个单元格统一设置 `device = "cuda"`、`dtype = "float32"`；使用 CPU 时把设备改为 `"cpu"`。模型创建后用 `.to(device, dtype=dtype)` 迁移；`Stream` 提供的图片 Tensor 在前向调用前显式迁移，DiT 的 MSE 目标也一起迁移。普通数字和列表由模型沿用参数的设备和精度，语言模型的字符编号仍为普通整数列表。量子训练的角度 Tensor 直接在目标设备上创建，量子态用 complex64；PQC 和 QAOA 沿用模型的 `.to(...)`。CUDA 需要本机 NVIDIA 驱动与带 NVRTC 的 CUDA Toolkit，无需第三方 Python 运行依赖。
-
-| Notebook | 学习内容 | 默认训练 |
+| 目录 | 内容 | 建议顺序 |
 | --- | --- | --- |
-| `regression.ipynb` | 线性关系、拟合 x²、画曲线与保存加载 | 301 / 1001 步 |
-| `classification.ipynb` | Iris 三分类、划分测试集、标准化、类别与概率 | 501 步 |
-| `lenet.ipynb` | MNIST、卷积、池化与展平 | 2000 张，5 轮 |
-| `resnet.ipynb` | CIFAR-10、残差块与 BatchNorm | 500 张，3 轮 |
-| `attention.ipynb` | 通过注意力读取被标记的数值 | 401 步 |
-| `vit.ipynb` | 图片分块、Transformer 与分类 | 2 步 |
-| `language_model.ipynb` | 字符编号、因果注意力、AdamW、梯度裁剪、随机续写与 KV cache | 2 步 |
-| `dit.ipynb` | Stream 准备生成目标，DiT 预测速度与 Euler 采样 | 2 轮，每轮 2 批，采样 8 步 |
-| `bell.ipynb` | 量子态、H/CNOT、电路与概率图、采样及测量坍缩 | 不涉及训练 |
-| `quantum_training.ipynb` | Tensor 旋转角度、期望值、量子反向与 SGD | 2 步 |
-| `hybrid.ipynb` | Linear → 随机结构 PQC → Linear，端到端混合网络 | 2 步 |
-| `vqe.ipynb` | 组合哈密顿量、多结果读出、能量优化与局部 Bloch 球 | 2 步 |
-| `qaoa.ipynb` | 四节点 MaxCut、成本与混合演化、分组概率和切分图 | 2 步 |
-| `quantum_probabilities.ipynb` | 用可求导概率学习目标分布、边缘概率与反向传播 | 2 步 |
+| [nn](nn/README.md) | 基础神经网络与图像分类 | 回归 → Iris → LeNet → ResNet；再看 Attention、ViT |
+| [generation](generation/README.md) | 扩散模型生成 | DiT 加噪训练、逐步去噪；Flow Matching 对照 |
+| [lm](lm/README.md) | 语言模型与训练入口 | 字符 LM → Dense/MoE Decoder → 真实语料 CLI |
+| [quantum](quantum/README.md) | 量子态、量子优化与 PQC | Bell → 可训练电路 → VQE/QAOA → 混合网络与 barren plateau |
 
-两步实验用于理解和验证流程，预测或生成效果需要后续训练。本轮在 Windows 的 NVIDIA RTX PRO 4000 Blackwell（SM120）、CUDA Toolkit 13.4、float32 下实际执行了八个经典 Notebook 的全部 60 个非空代码单元，包括图表展示方法。LeNet 完整训练 2000 张 × 5 轮并测试 500 张；ResNet 完整训练 500 张 × 3 轮并测试 100 张，其余示例也运行表中的默认步数。验证记录确认模型、损失、反向与优化器更新期间没有调用 CPU 后端，损失为有限值，发生了实际 CUDA kernel dispatch。Notebook 保留本轮真实文本输出；图表在重新运行对应单元格后显示。随机初始化及数据打乱会使下一次结果有所不同。
+默认 `device="cuda"`、`dtype="float32"`，无 CUDA 时把设备改成 `"cpu"`。新的 Decoder 示例在 CUDA 上使用 BF16 激活，参数、参数梯度与 Adam 状态仍为 FP32；CPU 使用普通 FP32。量子态对应 complex64。SDK 不依赖 PyTorch、NumPy、Triton 或其他量子 package；CUDA 需要 NVIDIA 驱动和含 NVRTC 的 Toolkit。
 
-图像和文本统一用 `from qutai import Stream` 分批。`data = Stream(...)` 创建一次，`for inputs, targets in data` 每次遍历一轮；`len(data)` 是批次数。图像形状来自当前批第一张图片，调用时不用传 `shape`；同批图片尺寸不一致时在外部预处理。训练流默认打乱并显示进度，测试或预览设置 `shuffle=False, progress=False`。
+Notebook 可以从项目根目录、`examples` 或各分组目录启动。图像数据解析集中在 [datasets.py](datasets.py)，Iris、文本与下载缓存共用 [data](data/README.md)，不在各组重复复制。Iris 与字符语料已随源码提供；图像缓存不存在时才下载。
 
-DiT 使用 `Stream(images, method=method)`，原生支持 Diffusion 和 FlowMatching，自动完成 0–1 到 −1–1 的范围转换，直接输出 `(inputs, times, targets)`。不需要回调函数；`seed` 可统一复现打乱、时间与噪声。多张图片统一用 `visualization.ImageCombine(...)` 组合显示。
+共有16本Notebook。教学示例默认规模如下，少量更新用于理解接口，不代表正式训练质量：
 
-具体数据集的解析和预处理继续留在 `datasets.py`，不纳入 SDK。其 `Images` 集合只保存原始像素字节，`images[i]` 取样时返回归一化 Tensor，可以直接查看 `.shape`。SDK 的 `Stream` 同样可以接收普通列表或其他可索引的样本集合。
+| Notebook | 默认运行 |
+| --- | --- |
+| [nn/regression](nn/regression.ipynb) | 线性回归301步、拟合平方1001步、保存/恢复预测 |
+| [nn/iris](nn/iris.ipynb) | Iris三分类501步，独立测试与标准化 |
+| [nn/lenet](nn/lenet.ipynb) | MNIST训练2000张×5轮，测试500张 |
+| [nn/resnet](nn/resnet.ipynb) | CIFAR-10训练500张×3轮，测试100张 |
+| [nn/attention](nn/attention.ipynb) | 401步学习读取序列中被标记的数值 |
+| [nn/vit](nn/vit.ipynb) | Patch/Transformer图像分类2步 |
+| [generation/diffusion](generation/diffusion.ipynb) | DiT扩散训练2轮×2批，采样8步 |
+| [lm/language_model](lm/language_model.ipynb) | 字符LM训练2步、续写、KV cache对照 |
+| [lm/decoder_training](lm/decoder_training.ipynb) | Dense/MoE各20步，核对同一个下一步恢复 |
+| [quantum/bell](quantum/bell.ipynb) | Bell态、概率、采样、坍缩与Bloch球 |
+| [quantum/quantum_training](quantum/quantum_training.ipynb) | 一个RY角度训练2步 |
+| [quantum/hybrid](quantum/hybrid.ipynb) | Linear→PQC→Linear混合网络2步 |
+| [quantum/vqe](quantum/vqe.ipynb) | 两比特VQE，能量优化2步 |
+| [quantum/qaoa](quantum/qaoa.ipynb) | 四节点MaxCut，QAOA更新2步 |
+| [quantum/quantum_probabilities](quantum/quantum_probabilities.ipynb) | 可求导概率分布训练2步 |
+| [quantum/barren_plateau](quantum/barren_plateau.ipynb) | 多比特/深度/seed的真实梯度统计与解析对照 |
 
-仅回归示例保存最后训练的平方模型到 `regression.json`；空模型加载后再显式 `.to(device, dtype=dtype)`，本轮已验证恢复后的 GPU 预测与保存前逐值相同。其他示例结束于预测或可视化。重复的梯度和数值检查交给 `tests`，教学单元集中展示算法流程。
+回归模型写到当前工作目录的 `runs/regression.json`。Decoder恢复演示使用自动清理的临时目录；正式CLI训练必须显式选择新的输出目录。源Notebook保留已有教学输出；重新执行时显示当前模型和设备的实际结果。
 
-`bell.ipynb` 从全零态构造 Bell 态，采样文本结果已保留，运行展示单元格即可生成图表。q0 对应位串最左侧的一位；`sample` / `counts` 保留原状态，`measure` 会使状态坍缩。最后用 Bloch 球对照 H 门后的局部纯态与 Bell 态中位于球心的局部混合态。示例只使用标准库和 qutai，无需下载数据。
-
-`quantum_training.ipynb` 将单个 RY 门的角度交给 SGD，使用 MSE 学习目标 Z 期望值 0.5。`circuit.run()` 查看数值量子态，`circuit.expectation(...)` 保留可训练角度的计算图；两次更新的文本记录已保留，运行展示单元格即可生成图表。
-
-`hybrid.ipynb` 将 `qnn.PQC` 直接放入 `nn.Model`。每个旋转位置的 RX/RY/RZ 在创建时随机选择并固定，训练更新角度。示例使用九对普通数字，已保留两次更新的损失及预测文本，运行展示单元格即可生成混合网络图与实际电路，不需要数据下载。
-
-`vqe.ipynb` 用一个 RY 角度与 CNOT 准备两比特状态，直接最小化组合哈密顿量的期望值。理论最低能量为 `-sqrt(2)`，两步 SGD 后的能量文本已保留，概率图与 q0 的 Bloch 球可运行展示单元格生成；只验证流程，不要求两步收敛。
-
-`qaoa.ipynb` 将四节点环的 MaxCut 编码为成本，使用一层 QAOA 的 gamma、beta 两个参数。严格两次更新后期望切边数为 `1.421633 → 2.585731 → 2.935219`；理论最大值是 4，最优位串为 `0101` 和 `1010`。Notebook 逐步展示无向图、16 种分组的得分、电路、训练、概率、采样和按组着色的图；图表已验证可生成，运行展示单元格即可显示，不需要数据下载或第三方包。
-
-量子训练默认使用伴随求导；`circuit.expectation(..., method="parameter-shift")` 可显式选择参数移位核对梯度。外部仍然调用 `loss.backward()`。性能对照单独放在 `adjoint_benchmark.py`，可在项目根目录运行 `python examples/adjoint_benchmark.py`：双方各预热一次，再交替顺序各测三次，比较前向加反向的中位耗时及最大梯度差，不执行参数更新。
-
-`quantum_probabilities.ipynb` 直接将 `circuit.probabilities()` 返回的 Tensor 交给 MSE，用一个角度学习 `[0.15, 0, 0, 0.85]`。两步更新的 MSE 为 `0.192294 → 0.126238 → 0.074218`；概率和损失文本已保留，运行展示单元格即可生成电路、概率图与损失曲线。部分比特可以用 wires 指定，概率同样支持伴随法和参数移位反向；数值 `state.probabilities()` 保留普通列表接口。
-
-`language_model.ipynb` 用 AdamW 更新两步，在 backward 与 step 之间执行全局梯度裁剪，并对照默认贪心续写与 temperature/top_k 随机采样。示例 seed=42 用于复现，SDK 默认 seed=None；这里不保存模型或优化器文件，恢复训练的用法见项目 README。
-
-语言模型的 generate 默认启用 KV cache，Notebook 最后用 use_cache=False 对照计算结果和窗口未满时的投影处理量。固定绝对位置的窗口移满后会重建缓存，保证与原滑窗语义一致；缓存不保存在模型中。
+LM主入口是 `python examples/lm/train.py --help`；旧 `examples/lm_train.py`保留为简短兼容入口。量子梯度性能对照位于 `python examples/quantum/adjoint_benchmark.py`。

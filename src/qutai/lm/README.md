@@ -48,12 +48,12 @@ state = lm.load_checkpoint("runs/debug", model, optimizer,
                            data=batches, tokenizer=tokenizer)
 ```
 
-在仓库根目录运行 `python -X utf8 examples/lm_train.py --help`。三个示例配置分别为 `examples/data/lm_debug.json`（11,340,032 参数）、`dense300m.json`（306,226,176 参数）和 `moe1b.json`（966,992,896 总参数，约 306,390,016 活跃参数）。后两者使用 UtaiLM 对应配置；配置文件描述结构，不代表已经完成正式预训练。
+在仓库根目录运行 `python -X utf8 examples/lm/train.py --help`。三个示例配置分别为 `examples/lm/configs/lm_debug.json`（11,340,032 参数）、`dense300m.json`（306,226,176 参数）和 `moe1b.json`（966,992,896 总参数，约 306,390,016 活跃参数）。后两者使用 UtaiLM 对应配置；配置文件描述结构，不代表已经完成正式预训练。
 
 以下命令只向独立的 `runs/qutai-debug` 写模型与 JSONL 日志：
 
 ```text
-python -X utf8 examples/lm_train.py --config examples/data/lm_debug.json --tokenizer path/to/tokenizer.json --data path/to/pretrain --output runs/qutai-debug --device cuda --precision bfloat16 --batch-size 2 --sequence-length 128 --max-steps 1000 --lr-total-steps 1000 --warmup-steps 50 --checkpoint-every 100
+python -X utf8 examples/lm/train.py --config examples/lm/configs/lm_debug.json --tokenizer path/to/tokenizer.json --data path/to/pretrain --output runs/qutai-debug --device cuda --precision bfloat16 --batch-size 2 --sequence-length 128 --max-steps 1000 --lr-total-steps 1000 --warmup-steps 50 --checkpoint-every 100
 ```
 
 新训练要求输出目录为空。恢复时完整重复原命令并添加 `--resume`；模型、tokenizer 哈希、语料、批次、精度、总更新目标和 LR 预算必须相同。`--stop-after 100` 只限制本次执行的更新数，适合主动暂停，不会缩短保存的总预算。`--dry-run` 只预检数据/配置和参数预算，不分配模型或创建输出。

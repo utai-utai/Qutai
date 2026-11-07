@@ -14,14 +14,17 @@ from urllib.request import urlopen
 from qutai import Tensor
 
 
+DATA_DIRECTORY = Path(__file__).resolve().parent / "data"
+
+
 MNIST_URL = "https://storage.googleapis.com/cvdf-datasets/mnist/"
-MNIST_DIRECTORY = Path(__file__).parent / "data" / "mnist"
+MNIST_DIRECTORY = DATA_DIRECTORY / "mnist"
 MNIST_FILES = {
     "train": ("train-images-idx3-ubyte.gz", "train-labels-idx1-ubyte.gz"),
     "test": ("t10k-images-idx3-ubyte.gz", "t10k-labels-idx1-ubyte.gz"),
 }
 CIFAR10_URL = "https://storage.googleapis.com/mirror.tensorflow.org/www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz"
-CIFAR10_DIRECTORY = Path(__file__).parent / "data" / "cifar10"
+CIFAR10_DIRECTORY = DATA_DIRECTORY / "cifar10"
 CIFAR10_NAMES = ("airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
 
 
