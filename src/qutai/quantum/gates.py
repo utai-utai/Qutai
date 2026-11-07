@@ -104,16 +104,16 @@ class _Rotation(Gate):
 
 def _rx(angle: float) -> Matrix:
     c, s = cos(angle / 2), -1j * sin(angle / 2)
-    return ((c, s), (s, c))
+    return (c, s), (s, c)
 
 
 def _ry(angle: float) -> Matrix:
     c, s = cos(angle / 2), sin(angle / 2)
-    return ((c, -s), (s, c))
+    return (c, -s), (s, c)
 
 
 def _rz(angle: float) -> Matrix:
-    return ((exp(-0.5j * angle), 0), (0, exp(0.5j * angle)))
+    return (exp(-0.5j * angle), 0), (0, exp(0.5j * angle))
 
 
 def I(wire: int) -> Gate:
