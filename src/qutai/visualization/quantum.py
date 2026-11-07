@@ -126,6 +126,7 @@ class Bloch:
         self.wire, self.title = wire, title
         self.vector = tuple(state.expectation([X(wire), Y(wire), Z(wire)]))
         self.length = min(1.0, sqrt(sum(value * value for value in self.vector)))
+        self.tolerance = 1e-6 if state.dtype == "complex64" else 1e-12
 
     def _repr_svg_(self) -> str:
         width, height = 480, 490
@@ -152,11 +153,11 @@ class Bloch:
             body += text(x + 14, y + 5, label, size=13)
         x, y = _bloch_project(*self.vector)
         body += '<circle cx="240" cy="235" r="3" fill="#64748b"/>'
-        if self.length > 1e-12:
+        if self.length > self.tolerance:
             body += f'<path data-role="bloch-vector" d="M240,235L{x:g},{y:g}" stroke="#dc2626" stroke-width="3" marker-end="url(#bloch-arrow)"/>'
         body += f'<circle data-role="bloch-point" data-vector="{",".join(map(str, self.vector))}" cx="{x:g}" cy="{y:g}" r="5" fill="#dc2626" stroke="white" stroke-width="1.5"/>'
-        coordinates = ', '.join(f'{0.0 if abs(value) < 1e-12 else value:.3f}' for value in self.vector)
-        kind = "纯态" if abs(self.length - 1) < 1e-10 else "最大混合态" if self.length < 1e-12 else "混合态"
+        coordinates = ', '.join(f'{0.0 if abs(value) < self.tolerance else value:.3f}' for value in self.vector)
+        kind = "纯态" if abs(self.length - 1) < max(self.tolerance, 1e-10) else "最大混合态" if self.length < self.tolerance else "混合态"
         body += text(width / 2, 420, f'q{self.wire} · (x, y, z) = ({coordinates})', anchor="middle", size=13)
         body += text(width / 2, 445, f'|r| = {self.length:.3f} · {kind}', anchor="middle", size=13, fill="#dc2626")
         body += text(width / 2, 474, '球面是纯态；球内是混合态。纠缠态显示单个比特的约化态。', anchor="middle", size=11, fill="#64748b")

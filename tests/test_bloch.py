@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from xml.etree import ElementTree
 
-from qutai import quantum as q
+from qutai import is_available, quantum as q
 from qutai.visualization import Bloch
 
 
@@ -59,6 +59,27 @@ class BlochTests(unittest.TestCase):
             self.assertAlmostEqual(view.length, cos(2 * angle))
             self.assertGreater(view.length, 0)
             self.assertLess(view.length, 1)
+
+    def test_complex64_labels_preserve_pure_and_mixed_state_vectors(self):
+        cases = [("纯态", [q.H(0)], True),
+                 ("最大混合态", [q.H(0), q.CNOT(0, 1)], False),
+                 ("混合态", [q.RY(0, 0.8), q.CNOT(0, 1)], True)]
+        for device in ("cpu", "cuda"):
+            with self.subTest(device=device):
+                if not is_available(device): self.skipTest(f"需要实际 {device} 设备")
+                for kind, gates, arrow in cases:
+                    with self.subTest(kind=kind):
+                        state = q.Circuit(2, gates).run(q.State(2, device=device, dtype="complex64"))
+                        before = state.storage.tolist()
+                        vector = tuple(state.expectation([q.X(0), q.Y(0), q.Z(0)]))
+                        view = Bloch(state)
+                        root = ElementTree.fromstring(view._repr_svg_())
+                        content = ''.join(root.itertext())
+                        self.assertIn(f"· {kind}", content)
+                        self.assertNotIn("-0.000", content)
+                        self.assertEqual(any(node.get('data-role') == 'bloch-vector' for node in root.iter()), arrow)
+                        self.assertEqual(view.vector, vector)
+                        self.assertEqual(state.storage.tolist(), before)
 
     def test_wire_zero_is_leftmost_and_view_is_snapshot(self):
         state = q.State(2).apply(q.X(0))
