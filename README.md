@@ -4,6 +4,8 @@
 
 从零实现的轻量计算 SDK：数值计算、神经网络与量子计算。只依赖 Python 标准库，支持 CPU、Apple GPU 和 NVIDIA CUDA。
 
+[使用手册（未上线）](https://qutai.yaoyuhan.com)
+
 ## 安装
 
 需要 Python 3.14+。从源码开发，在项目根目录运行：
