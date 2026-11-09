@@ -89,13 +89,15 @@ def _allocate_storage(device, record):
     backend = get_backend(device)
     if device == "cuda":
         return backend.CUDAStorage(record["size"], record["dtype"])
+    if device == "apple":
+        return backend.AppleStorage(size=record["size"], dtype=record["dtype"])
     if device == "cpu":
         result = backend.storage((), dtype=record["dtype"])
         result.buffer = array(_CODES[record["dtype"]], [0]) * (
             record["nbytes"] // array(_CODES[record["dtype"]]).itemsize
         )
         return result
-    raise ValueError("二进制 checkpoint 目前支持 CPU 与 CUDA 存储")
+    raise ValueError("二进制 checkpoint 目前支持 CPU、Apple 与 CUDA 存储")
 
 
 def _tokenizer_hash(tokenizer):
@@ -135,8 +137,11 @@ def _storage_chunks(storage, chunk_bytes):
             host = bytearray(min(chunk_bytes, storage.nbytes - offset))
             storage.runtime.download(storage.ptr + offset, host)
             yield host
+    elif storage.device == "apple":
+        for offset in range(0, storage.nbytes, chunk_bytes):
+            yield storage.read_bytes(offset, min(chunk_bytes, storage.nbytes - offset))
     else:
-        raise ValueError("二进制 checkpoint 目前支持 CPU 与 CUDA 存储")
+        raise ValueError("二进制 checkpoint 目前支持 CPU、Apple 与 CUDA 存储")
 
 
 class _ShardWriter:
@@ -379,8 +384,8 @@ def _read_storage(directory, record, storage, chunk_bytes):
     destination = (
         memoryview(storage.buffer).cast("B") if storage.device == "cpu" else None
     )
-    if storage.device not in ("cpu", "cuda"):
-        raise ValueError("二进制 checkpoint 目前支持 CPU 与 CUDA 存储")
+    if storage.device not in ("cpu", "apple", "cuda"):
+        raise ValueError("二进制 checkpoint 目前支持 CPU、Apple 与 CUDA 存储")
     offset = 0
     for segment in record["segments"]:
         with (directory / segment["file"]).open("rb") as file:
@@ -393,7 +398,8 @@ def _read_storage(directory, record, storage, chunk_bytes):
                 if storage.device == "cpu":
                     destination[offset : offset + len(content)] = content
                 else:
-                    storage.runtime.upload(storage.ptr + offset, content)
+                    if storage.device == "apple": storage.write_bytes(offset, content)
+                    else: storage.runtime.upload(storage.ptr + offset, content)
                 offset += len(content)
                 remaining -= len(content)
     if storage.device == "cpu" and sys.byteorder != "little":

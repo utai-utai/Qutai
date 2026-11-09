@@ -17,6 +17,23 @@ class DeviceTransferTests(unittest.TestCase):
         self.assertEqual(len(actual), len(expected))
         for a, b in zip(actual, expected, strict=True): self.assertAlmostEqual(abs(a-b), 0, places=places)
 
+    def test_cpu_defaults_and_explicit_storage_precision(self):
+        self.assertEqual(Tensor([1, 2], device='cpu').dtype, 'float64')
+        self.assertEqual(quantum.State(1, device='cpu').dtype, 'complex128')
+        decoder = lm.Decoder(lm.Config(vocab_size=8, n_layers=1, d_model=4, n_heads=1, n_kv_heads=1, d_ff=8, max_seq_len=4))
+        self.assertEqual({p.dtype for p in decoder.parameters()}, {'float64'})
+        tensor = Tensor(cpu.storage([1, 2], dtype='float32'))
+        self.assertEqual(tensor.dtype, 'float32')
+        self.assertIs(tensor.to('cpu'), tensor)
+        self.assertEqual(tensor.to(copy=True).dtype, 'float32')
+        state = quantum.State(1, [1, 0], dtype='complex64')
+        self.assertIs(state.to('cpu'), state)
+        self.assertEqual(state.copy().dtype, 'complex64')
+        angle = Tensor(0.3, dtype='float32', requires_grad=True)
+        circuit = quantum.Circuit(1, [quantum.RY(0, angle)])
+        self.assertEqual(circuit.run().dtype, 'complex64')
+        self.assertEqual(circuit.expectation(quantum.Z(0)).dtype, 'float32')
+
     def test_precision_is_real_contiguous_storage(self):
         for dtype, size in (("float32", 4), ("float64", 8), ("complex64", 8), ("complex128", 16)):
             values = [1+2j, -3j] if dtype.startswith('complex') else [0.1, -3]

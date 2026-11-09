@@ -3,7 +3,7 @@ from functools import partial
 from math import prod
 from typing import overload
 
-from ..backends.device import get_backend, transfer
+from ..backends.device import default_dtype, get_backend, transfer
 from ..backends.storage import Storage
 from . import grad as autograd
 from . import operations
@@ -14,7 +14,7 @@ from .types import Backward, Computation, Data, Index, Indices, IntegerData, Res
 class Tensor:
     def __init__(self, data: Data | Storage, *, shape: Shape | None = None, requires_grad: bool = False, device: str | None = None, dtype: str | None = None) -> None:
         device = device if device is not None else data.device if isinstance(data, Storage) else "cpu"
-        dtype = dtype if dtype is not None else data.dtype if isinstance(data, Storage) else "float64"
+        dtype = dtype if dtype is not None else data.dtype if isinstance(data, Storage) else default_dtype(device)
         backend = get_backend(device)
         if dtype not in ("float32", "float64", "bfloat16"): raise ValueError("实数 Tensor 只支持 float32、float64 或 CUDA bfloat16")
         if dtype == "bfloat16" and device != "cuda": raise ValueError("BF16 Tensor 存储当前只支持 CUDA")
@@ -149,7 +149,7 @@ class Tensor:
         return self.storage.tolist()[0]
 
     def to(self, device: str | None = None, *, dtype: str | None = None, copy: bool = False) -> Tensor:
-        """返回转换后的 Tensor 并保留求导关系；相同配置默认返回自身。"""
+        """转换设备并保留求导关系；跨设备默认选择精度，相同配置返回自身。"""
         if dtype is not None and dtype not in ("float32", "float64", "bfloat16"): raise ValueError("实数 Tensor 只支持 float32、float64 或 CUDA bfloat16")
         values = transfer(self.storage, device, dtype, copy=copy)
         if values is self.storage: return self

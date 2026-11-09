@@ -1,5 +1,5 @@
 from math import prod, sqrt
-from ..backends import cpu_lm, cuda_lm
+from ..backends import apple_lm, cpu_lm, cuda_lm
 from ..backends.device import get_backend
 from ..backends.precision import matmul_precision, set_matmul_precision
 from ..core.grad import record
@@ -12,6 +12,8 @@ def backend(value):
         return cpu_lm
     if device == "cuda":
         return cuda_lm
+    if device == "apple":
+        return apple_lm
     raise ValueError("此设备尚未实现大型语言模型内核")
 
 

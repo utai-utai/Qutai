@@ -134,7 +134,7 @@ class CUDADecoderTests(unittest.TestCase):
     assertClose = DecoderTests.assertClose
 
     def test_gpu_forward_gradients_two_steps_and_no_cpu_fallback(self):
-        cpu_model = Decoder(tiny(), seed=7)
+        cpu_model = Decoder(tiny(), dtype="float32", seed=7)
         gpu_model = Decoder(tiny(), device="cuda", seed=8)
         copy_parameters(cpu_model, gpu_model)
         tokens = [[1, 2, 3, 4], [2, 3, 4, 5]]

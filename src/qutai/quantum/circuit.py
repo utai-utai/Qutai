@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from functools import partial
 from typing import Self, overload
 
-from ..backends.device import get_backend
+from ..backends.device import default_dtype, get_backend
 from ..core.grad import record
 from ..core.tensor import Tensor
 from .gates import Gate
@@ -13,9 +13,10 @@ from .state import State, selected_wires
 
 class Circuit:
     """保存量子门；run 返回状态，期望值和概率可接入实数自动求导。"""
-    def __init__(self, qubits: int, gates: Iterable[Gate] = ()) -> None:
+    def __init__(self, qubits: int, gates: Iterable[Gate] = (), *, device: str | None = None, dtype: str | None = None) -> None:
         if not isinstance(qubits, int) or qubits < 1: raise ValueError("量子比特数量必须是正整数")
         self.qubits = qubits
+        self.device, self.dtype = device, dtype
         self.gates: list[Gate] = []
         for gate in gates: self.append(gate)
 
@@ -41,8 +42,11 @@ class Circuit:
         if state is not None and state.qubits != self.qubits: raise ValueError("输入量子态与电路的量子比特数量必须相同")
         parameters = self.parameters()
         if parameters: get_backend(*(parameter.storage for parameter in parameters))
-        initial = (State(self.qubits, device=parameters[0].device, dtype="complex64" if parameters[0].dtype == "float32" else "complex128")
-                   if parameters and state is None else State(self.qubits) if state is None else state.copy())
+        device = self.device or (parameters[0].device if parameters else state.device if state is not None else "cpu")
+        dtype = self.dtype or (("complex64" if parameters[0].dtype == "float32" else "complex128") if parameters else state.dtype if state is not None else default_dtype(device, complex_data=True))
+        if state is not None and (state.device, state.dtype) != (device, dtype):
+            raise ValueError("输入量子态的设备和精度必须与电路一致")
+        initial = State(self.qubits, device=device, dtype=dtype) if state is None else state.copy()
         if parameters and (initial.device != parameters[0].device or initial.dtype != ("complex64" if parameters[0].dtype == "float32" else "complex128")):
             raise ValueError("量子初态的设备和精度必须与旋转角度一致")
         gates, parents, rotations = [], [], []

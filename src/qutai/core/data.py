@@ -9,7 +9,7 @@ from ..visualization.progress import Progress
 
 class Stream:
     """统一图像、文本与生成训练的数据流；method 指定 Diffusion 或 FlowMatching。"""
-    def __init__(self, data: Sequence, targets: Sequence[int] | None = None, *, batch_size: int = 32, context_length: int = 16, method: GenerationMethod[Tensor] | None = None, shuffle: bool = True, seed: int | None = None, limit: int | None = None, progress: bool = True) -> None:
+    def __init__(self, data: Sequence, targets: Sequence[int] | None = None, *, batch_size: int = 32, context_length: int = 16, method: GenerationMethod[Tensor] | None = None, shuffle: bool = True, seed: int | None = None, limit: int | None = None, progress: bool = True, device: str | None = None, dtype: str | None = None) -> None:
         if type(batch_size) is not int or batch_size <= 0: raise ValueError("每批样本数必须是正整数")
         if limit is not None and limit < 0: raise ValueError("样本数量上限不能为负数")
         if method is not None and targets is not None: raise ValueError("生成模式不需要类别标签")
@@ -22,6 +22,7 @@ class Stream:
 
         self.data, self.targets = data, targets
         self.method = method
+        self.device, self.dtype = device, dtype
         self.batch_size, self.context_length = batch_size, context_length
         self.count = count if limit is None else min(limit, count)
         self.shuffle, self.progress = shuffle, progress
@@ -48,7 +49,7 @@ class Stream:
             return ([list(self.data[index:index + length]) for index in offsets],
                     [list(self.data[index + 1:index + length + 1]) for index in offsets])
         samples = [self.data[index] for index in selected]
-        tensors = [sample if isinstance(sample, Tensor) else Tensor(sample) for sample in samples]
+        tensors = [sample.to(self.device, dtype=self.dtype) if isinstance(sample, Tensor) else Tensor(sample, device=self.device, dtype=self.dtype) for sample in samples]
         shape = tensors[0].shape
         if any(tensor.shape != shape for tensor in tensors):
             raise ValueError("同一批样本的形状必须一致，请先在外部预处理")

@@ -18,4 +18,4 @@ Issues = "https://github.com/utai-utai/Qutai/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-qutai = ["backends/kernels/*.cu"]
+qutai = ["backends/native/*.mm", "backends/native/*.metal", "backends/kernels/*.cu"]

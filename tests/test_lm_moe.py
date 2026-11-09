@@ -103,7 +103,7 @@ class MoETests(unittest.TestCase):
 @unittest.skipUnless(cuda.is_available(), "需要真实 CUDA 设备")
 class CUDAMoETests(unittest.TestCase):
     def test_gpu_sparse_routes_and_two_updates_match_cpu(self):
-        source = Decoder(config(), seed=19)
+        source = Decoder(config(), dtype="float32", seed=19)
         target = Decoder(config(), device="cuda", seed=20)
         for a, b in zip(source.parameters(), target.parameters()):
             cuda.copy_into(b.storage, cuda.storage(a.storage.tolist(), dtype="float32"))

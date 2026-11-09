@@ -1,5 +1,5 @@
 from ..core.context import set_recording, set_training
-from ..backends.device import get_backend
+from ..backends.device import default_dtype, get_backend
 from ..core.migration import move
 from ..core.shape import flatten_indices, infer_shape
 from ..core.tensor import Tensor
@@ -18,7 +18,8 @@ from .recompute import checkpoint
 
 
 class Decoder:
-    def __init__(self, config: Config, *, device="cpu", dtype="float32", seed=None):
+    def __init__(self, config: Config, *, device="cpu", dtype=None, seed=None):
+        dtype = default_dtype(device) if dtype is None else dtype
         if dtype not in ("float32", "float64"):
             raise ValueError("解码器参数必须为 float32 或 float64")
         self.config = config

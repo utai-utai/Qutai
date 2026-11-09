@@ -38,7 +38,7 @@ class SerializationTests(unittest.TestCase):
         source = make_model(42)
         inputs = [[-1], [0], [0.5], [1]]
         with TemporaryDirectory() as folder:
-            path = Path(folder) / "model.json"
+            path = Path(folder) / "new" / "models" / "model.json"
             source.save(path)
             data = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(set(data), {"model", "parameters"})

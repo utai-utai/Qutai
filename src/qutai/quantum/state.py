@@ -5,7 +5,7 @@ from math import isclose
 from random import Random
 from typing import Self, overload
 
-from ..backends.device import get_backend, transfer
+from ..backends.device import default_dtype, get_backend, transfer
 from ..backends.storage import Storage
 from .gates import Gate
 from .observables import Operator, as_observable, expectation_values
@@ -26,7 +26,7 @@ class State:
         if not isinstance(qubits, int) or qubits < 1: raise ValueError("量子比特数量必须是正整数")
         self.qubits = qubits
         device = device if device is not None else amplitudes.device if isinstance(amplitudes, Storage) else "cpu"
-        dtype = dtype if dtype is not None else amplitudes.dtype if isinstance(amplitudes, Storage) else "complex128"
+        dtype = dtype if dtype is not None else amplitudes.dtype if isinstance(amplitudes, Storage) else default_dtype(device, complex_data=True)
         if dtype not in ("complex64", "complex128"): raise ValueError("量子振幅只支持 complex64 或 complex128")
         backend = get_backend(device)
         if isinstance(amplitudes, Storage) and amplitudes.device != device: raise ValueError("输入振幅与目标设备必须相同")
@@ -54,7 +54,7 @@ class State:
         self.storage = get_backend(self.device).storage(values, dtype=self.dtype)
 
     def to(self, device: str | None = None, *, dtype: str | None = None, copy: bool = False) -> State:
-        """转换设备或复数精度；相同配置默认返回自身，不改变原状态。"""
+        """转换设备或复数精度；跨设备自动选择精度，不改变原状态。"""
         if dtype is not None and dtype not in ("complex64", "complex128"): raise ValueError("量子振幅只支持 complex64 或 complex128")
         values = transfer(self.storage, device, dtype, copy=copy)
         if values is self.storage: return self

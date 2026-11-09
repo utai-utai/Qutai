@@ -1,8 +1,8 @@
-from . import cpu, cuda
+from . import apple, cpu, cuda
 from .storage import Storage
 
 
-_BACKENDS = {"cpu": cpu, "cuda": cuda}
+_BACKENDS = {"cpu": cpu, "cuda": cuda, "apple": apple}
 
 
 def get_backend(device: str | Storage = "cpu", *others: Storage):
@@ -13,6 +13,13 @@ def get_backend(device: str | Storage = "cpu", *others: Storage):
         device = device.device
     if device not in _BACKENDS: raise ValueError(f"尚不支持设备：{device}")
     return _BACKENDS[device]
+
+
+def default_dtype(device: str, *, complex_data: bool = False) -> str:
+    """CPU 默认双精度，GPU 默认单精度；不触发设备初始化。"""
+    get_backend(device)
+    if complex_data: return "complex128" if device == "cpu" else "complex64"
+    return "float64" if device == "cpu" else "float32"
 
 
 def is_available(device: str) -> bool:
@@ -26,9 +33,11 @@ def synchronize(device: str = "cpu") -> None:
 
 
 def transfer(values: Storage, device: str | None = None, dtype: str | None = None, *, copy: bool = False) -> Storage:
-    """设备迁移同步；同 CUDA 设备的精度转换按流排队，相同配置默认复用。"""
+    """跨设备采用目标默认精度；同设备保留精度，显式 dtype 优先。"""
     device = values.device if device is None else device
-    dtype = values.dtype if dtype is None else dtype
+    if dtype is None:
+        dtype = (values.dtype if device == values.device or values.dtype == "int64"
+                 else default_dtype(device, complex_data=values.dtype.startswith("complex")))
     backend = get_backend(device)
     if (device, dtype) == (values.device, values.dtype) and not copy: return values
     if device == values.device == "cuda": return backend.from_storage(values, dtype=dtype)

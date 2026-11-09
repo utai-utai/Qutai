@@ -11,8 +11,9 @@ dist/
 
 # Downloaded datasets and generated model files
 /examples/data/mnist/
-/examples/data/cifar10/
 /examples/*.json
+/examples/nn/regression.json
+/regression.json
 
 # Local scratch script
 /main.py

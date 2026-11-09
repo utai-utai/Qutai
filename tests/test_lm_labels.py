@@ -43,7 +43,7 @@ class CUDAHeadLabelTests(unittest.TestCase):
             d_ff=32,
             max_seq_len=33,
         )
-        reference = lm.Decoder(config, seed=7)
+        reference = lm.Decoder(config, dtype="float32", seed=7)
         model = lm.Decoder(config, device="cuda", seed=8)
         for expected, actual in zip(
             reference.parameters(), model.parameters(), strict=True

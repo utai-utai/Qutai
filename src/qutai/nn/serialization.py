@@ -38,7 +38,9 @@ def describe_model(model: LayerLike[Tensor], model_type: Callable[[Iterable[Laye
 
 def save_model(model: LayerLike[Tensor], path: str | Path, model_type: Callable[[Iterable[LayerLike[Tensor]]], LayerLike[Tensor]]) -> None:
     """把模型结构、参数数值和可训练标记写入 JSON 文件。"""
-    Path(path).write_text(json.dumps(describe_model(model, model_type), indent=2), encoding="utf-8")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(describe_model(model, model_type), indent=2), encoding="utf-8")
 
 
 def _describe_layer(layer: LayerLike[Tensor], indices: dict[Tensor, int], model_type: Callable[[Iterable[LayerLike[Tensor]]], LayerLike[Tensor]], normalizations: dict[BatchNorm2d, int] | None = None) -> dict:
