@@ -16,7 +16,7 @@ _ROTATIONS = {"RX": RX, "RY": RY, "RZ": RZ}
 
 class PQC:
     """固定随机旋转轴的参数化电路，将 (..., qubits) 输入变为同形状实数特征。"""
-    def __init__(self, qubits: int, depth: int = 2, *, entangler: str = "cnot", seed: int | None = None) -> None:
+    def __init__(self, qubits: int, depth: int = 2, *, entangler: str = "cnot", seed: int | None = None, device: str | None = None, dtype: str | None = None) -> None:
         if type(qubits) is not int or qubits <= 0: raise ValueError("量子比特数量必须是正整数")
         if type(depth) is not int or depth <= 0: raise ValueError("电路深度必须是正整数")
         entangler = entangler.lower()
@@ -24,7 +24,7 @@ class PQC:
         self.qubits, self.depth, self.entangler = qubits, depth, entangler
         random = Random(seed)
         self.rotations = tuple(tuple(random.choice(tuple(_ROTATIONS)) for _ in range(qubits)) for _ in range(depth))
-        self.weight = Tensor([random.uniform(-pi, pi) for _ in range(depth * qubits)], shape=(depth, qubits), requires_grad=True)
+        self.weight = Tensor([random.uniform(-pi, pi) for _ in range(depth * qubits)], shape=(depth, qubits), requires_grad=True, device=device, dtype=dtype)
 
     def to(self, device: str | None = None, *, dtype: str | None = None) -> PQC:
         """原地迁移模型参数、已有梯度与子层的运行统计量。"""

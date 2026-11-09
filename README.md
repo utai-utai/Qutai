@@ -27,7 +27,7 @@ loss.backward()
 print(x.grad.tolist())  # [2.0, 4.0, 6.0]
 ```
 
-`Tensor(..., device="apple")` 选择设备，`model.to(device)` 迁移模型。设备可选 `cpu / apple / cuda`，精度自动选择：CPU 默认 float64 / complex128，Apple 和 CUDA 默认 float32 / complex64。跨设备迁移时采用目标设备的默认精度，同设备保持现有精度；有特殊需求时仍可显式指定 `dtype`。
+统一在创建时指定设备，例如 `Tensor(..., device="apple")`、`nn.Linear(2, 1, device="apple")` 或 `nn.Model([...], device="apple")`。设备可选 `cpu / apple / cuda`，精度自动选择：CPU 默认 float64 / complex128，Apple 和 CUDA 默认 float32 / complex64。模型会统一内部各层的设备；有特殊需求时仍可显式指定 `dtype`。
 
 ## 模块
 

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from ..core.context import set_recording, set_training
+from ..core.migration import move
 from ..core.tensor import Tensor
 from ..core.types import Data
 from .layers import Sequence
@@ -23,5 +24,7 @@ class Model(Sequence):
     def load(self, path: str | Path) -> Model:
         """空模型恢复结构与参数，已有结构时原地载入参数；返回自身。"""
         if self.layers: load_into(self, path, Model)
-        else: self.layers = restore_layers(path, Model)
+        else:
+            self.layers = restore_layers(path, Model)
+            move(self, self._device, self._dtype)
         return self

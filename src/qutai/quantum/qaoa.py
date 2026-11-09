@@ -32,14 +32,14 @@ def _z_terms(cost: Observable, qubits: int) -> tuple[tuple[float, tuple[int, ...
 
 class QAOA:
     """从等幅叠加态开始，交替执行 Z 成本演化与 X 混合演化。"""
-    def __init__(self, qubits: int, cost: Operator, depth: int = 1, *, seed: int | None = None) -> None:
+    def __init__(self, qubits: int, cost: Operator, depth: int = 1, *, seed: int | None = None, device: str | None = None, dtype: str | None = None) -> None:
         if type(qubits) is not int or qubits <= 0: raise ValueError("量子比特数量必须是正整数")
         if type(depth) is not int or depth <= 0: raise ValueError("电路深度必须是正整数")
         self.qubits, self.depth = qubits, depth
         self._cost = as_observable(cost)
         self._terms = _z_terms(self._cost, qubits)
         random = Random(seed)
-        self.weight = Tensor([random.uniform(-pi, pi) for _ in range(depth * 2)], shape=(depth, 2), requires_grad=True)
+        self.weight = Tensor([random.uniform(-pi, pi) for _ in range(depth * 2)], shape=(depth, 2), requires_grad=True, device=device, dtype=dtype)
 
     @property
     def cost(self) -> Observable:
