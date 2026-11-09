@@ -2,7 +2,7 @@
 
 先在项目根目录执行 `python -m pip install -e .`，再在 PyCharm 中用同一个 Python 环境打开 Notebook，**将 Notebook 工作目录设为项目根目录**。数据导入统一使用 `from examples.data.data import ...`，无需每本重复修改 sys.path。
 
-第一格只需指定 `device = "apple"`。CPU 或 NVIDIA GPU 分别改成 `"cpu"`、`"cuda"`；实数与量子态的精度由设备自动选择，不用再设置 dtype。教程不固定随机种子，重新运行时初始化、批次顺序和结果会变化。
+第一格只需指定 `device = "apple"`。CPU 或 NVIDIA GPU 分别改成 `"cpu"`、`"cuda"`；实数与量子态的精度由设备自动选择，不用再设置 dtype。模型和数据流在创建时传入 `device=device`。教程不固定随机种子，重新运行时初始化、批次顺序和结果会变化。
 
 修改 SDK 源码后，请重启 Notebook 内核并从第一格重新运行；只重跑 import 不会加载已导入模块的新代码。
 

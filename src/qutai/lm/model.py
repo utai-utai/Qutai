@@ -15,8 +15,9 @@ from .tokenizer import Tokenizer
 
 
 class Model:
-    def __init__(self, tokenizer: Tokenizer | None = None, *, context_length: int = 16, features: int = 16, heads: int = 2, depth: int = 1, hidden_features: int | None = None, seed: int | None = None) -> None:
+    def __init__(self, tokenizer: Tokenizer | None = None, *, context_length: int = 16, features: int = 16, heads: int = 2, depth: int = 1, hidden_features: int | None = None, seed: int | None = None, device: str | None = None, dtype: str | None = None) -> None:
         if context_length <= 0 or depth <= 0: raise ValueError("上下文长度和 Transformer 层数必须大于零")
+        self._device, self._dtype = device, dtype
         self.tokenizer = tokenizer
         self.context_length = context_length
         self.embedding: Embedding | None = None
@@ -31,6 +32,7 @@ class Model:
                 LayerNorm(features),
                 Linear(features, tokenizer.size, seed=None if seed is None else seed + 2 + depth * 6),
             ])
+        self.to(device, dtype=dtype)
 
     @property
     def layers(self) -> tuple[LayerLike[Tensor], ...]:
@@ -39,7 +41,10 @@ class Model:
 
     def to(self, device: str | None = None, *, dtype: str | None = None) -> Model:
         """原地迁移模型参数、已有梯度与子层的运行统计量。"""
-        return move(self, device, dtype)
+        move(self, device, dtype)
+        if device is not None: self._device, self._dtype = device, dtype
+        elif dtype is not None: self._dtype = dtype
+        return self
 
     def parameters(self) -> tuple[Tensor, ...]:
         """参数收集与去重复用神经网络容器，SGD 可以直接接收本模型。"""
@@ -115,4 +120,5 @@ class Model:
             self.embedding = embedding
             self.network = NeuralModel(layers[1:])
             self.tokenizer, self.context_length = tokenizer, context_length
+            self.to(self._device, dtype=self._dtype)
         return self

@@ -12,9 +12,11 @@ from .serialization import read_method, save_model
 
 
 class Model:
-    def __init__(self, network: DiT | None = None, *, method: Diffusion | FlowMatching | None = None) -> None:
+    def __init__(self, network: DiT | None = None, *, method: Diffusion | FlowMatching | None = None, device: str | None = None, dtype: str | None = None) -> None:
+        self._device, self._dtype = device, dtype
         self.network = network
         self.method = Diffusion() if network is not None and method is None else method
+        self.to(device, dtype=dtype)
 
     def _components(self) -> tuple[DiT, Diffusion | FlowMatching]:
         if self.network is None or self.method is None: raise ValueError("请先创建或加载生成模型")
@@ -27,7 +29,10 @@ class Model:
 
     def to(self, device: str | None = None, *, dtype: str | None = None) -> Model:
         """原地迁移模型参数、已有梯度与子层的运行统计量。"""
-        return move(self, device, dtype)
+        move(self, device, dtype)
+        if device is not None: self._device, self._dtype = device, dtype
+        elif dtype is not None: self._dtype = dtype
+        return self
 
     def parameters(self) -> tuple[Tensor, ...]:
         return () if self.network is None else self.network.parameters()
@@ -64,4 +69,5 @@ class Model:
             layers = restore_layers(path, NeuralModel)
             if len(layers) != 1 or not isinstance(layers[0], DiT): raise ValueError("生成模型文件需要包含一个 DiT 网络")
             self.network, self.method = layers[0], method
+            self.to(self._device, dtype=self._dtype)
         return self
