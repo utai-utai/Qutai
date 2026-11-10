@@ -75,7 +75,7 @@ def _launch(name, size, *arguments, dtype="float32", source="tensor.cu", block=F
         raise ValueError("此算子尚未实现 BF16 存储；请转换为 float32")
     real = "float" if dtype in ("float32", "complex64", "bfloat16") else "double"
     options = (f"-DREAL={real}",) + (("-DBFLOAT16=1",) if dtype == "bfloat16" else ())
-    get_runtime().launch(Path(__file__).parent / "kernels" / source, name, size * 256 if block else size, list(arguments), options=options)
+    get_runtime().launch(Path(__file__).parent / "cuda" / source, name, size * 256 if block else size, list(arguments), options=options)
 
 
 def is_available() -> bool:
@@ -354,7 +354,7 @@ def gemm(left, right, rows, inner, cols, *, batch=1, transpose_left=False, trans
         elif 128 <= rows <= 256 and inner >= 8192 and cols >= 1024:
             name, tile_m, tile_n, block = "gemm_bf16_long", 128, 64, (256, 1, 1)
     args = [_p(left), _p(right), _p(result), *(_i(x) for x in (rows, inner, cols, sa, sb, transpose_left, transpose_right, accumulate))]
-    runtime.launch(Path(__file__).parent / "kernels/gemm.cu", name, size, args,
+    runtime.launch(Path(__file__).parent / "cuda/gemm.cu", name, size, args,
                    options=tuple(options), grid=((cols + tile_n - 1) // tile_n, (rows + tile_m - 1) // tile_m, batch),
                    block=block)
     if mixed:

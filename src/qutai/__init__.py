@@ -7,4 +7,4 @@ from .core.tensor import (
 from .core.data import Stream
 from .core.context import set_recording, set_training
 from .backends.device import is_available, synchronize
-from .safetensors import SafeTensors, save_safetensors
+from .core.serialization import SafeTensors, save_safetensors

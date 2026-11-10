@@ -52,7 +52,7 @@ def concatenate(data: tuple[Operand, ...], axis: int = 0) -> Computation:
         raise ValueError('concatenate 除拼接轴以外的形状必须相同')
     target[axis] = sum(item.shape[axis] for item in data)
     backend = get_backend(*(item.storage for item in data))
-    if any(item.dtype != data[0].dtype for item in data): raise ValueError('concatenate 精度必须相同')
+    if any(item.storage.dtype != data[0].storage.dtype for item in data): raise ValueError('concatenate 精度必须相同')
     values = backend.concatenate(tuple(item.storage for item in data), tuple(item.shape for item in data), axis)
     return values, tuple(target), partial(_concatenate_backward, shape=tuple(target), sizes=tuple(item.shape[axis] for item in data), axis=axis)
 

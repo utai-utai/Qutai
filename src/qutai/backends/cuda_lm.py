@@ -3,7 +3,7 @@ from pathlib import Path
 from . import cuda
 from .cuda_runtime import get_runtime
 
-KERNEL = Path(__file__).parent / "kernels/lm.cu"
+KERNEL = Path(__file__).parent / "cuda/lm.cu"
 
 
 def _acc_dtype(dtype):

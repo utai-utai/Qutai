@@ -56,8 +56,8 @@ class Layer:
 
 
 class Dropout(Layer):
-    def __init__(self, probability=.5, *, seed=None):
-        super().__init__()
+    def __init__(self, probability: float = 0.5, *, seed: int | None = None, device: str | None = None, dtype: str | None = None) -> None:
+        super().__init__(device=device, dtype=dtype)
         if not 0 <= probability < 1: raise ValueError('probability 必须在 [0, 1) 内')
         self.probability, self.random = probability, Random(seed)
 

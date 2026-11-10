@@ -7,9 +7,9 @@ from pathlib import Path
 import struct
 import sys
 
-from .backends import cuda
-from .backends.device import get_backend
-from .core.tensor import Tensor
+from ..backends import cuda
+from ..backends.device import get_backend
+from .tensor import Tensor
 
 _DTYPES = {'F32': ('float32', 'f', 4), 'F64': ('float64', 'd', 8), 'BF16': ('bfloat16', 'H', 2)}
 
@@ -72,7 +72,7 @@ class SafeTensors(Mapping):
                         values = array(code)
                         values.frombytes(view)
                         if sys.byteorder != 'little': values.byteswap()
-                        storage = get_backend(self.device).storage(values, dtype=dtype)
+                        storage = get_backend(self.device).storage(values, dtype="float32" if self.device == "apple" else dtype)
             self._cache[name] = Tensor(storage, shape=tuple(item['shape']))
         return self._cache[name]
 

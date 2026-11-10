@@ -57,9 +57,9 @@ x.copy_(weights["weight"])
 
 SafeTensors 按需加载并缓存 F32/F64/BF16 权重，metadata 为字符串字典；BF16 需要 CUDA。tanh、atan、nn.Dropout、set_recording / set_training 和 lm.linear / rope / silu 也可直接使用。GPU 索引、查表和权重上传不需要第三方 Python 包。
 
-本次实现位置：core/shape.py 与 core/operations/transforms.py 处理索引和拼接；core/tensor.py 提供 split / copy_；backends/cuda.py 与 kernels/tensor.cu 执行 CUDA 索引；safetensors.py 负责权重读写。CPU/CUDA 前向、梯度与文件往返覆盖在 tests/test_public_tensor_io.py。
+本次实现位置：core/shape.py 与 core/operations/transforms.py 处理索引和拼接；core/tensor.py 提供 split / copy_；backends/cuda.py 与 backends/cuda/tensor.cu 执行 CUDA 索引；core/serialization.py 负责权重读写。CPU/CUDA 前向、梯度与文件往返覆盖在 tests/test_public_tensor_io.py。
 
-CUDA 通用算子会缓存最多 128 项只读索引参数；较宽的 LayerNorm / 连续轴 Softmax 使用并行归约，较大的 FP32 矩阵使用 64×64 分块。Python 常数除法在主机检查除零，避免 GPU 状态读回；Tensor 除数保持原有检查。相关实现位于 backends/cuda.py、kernels/nn.cu、kernels/gemm.cu 和 core/operations/elementwise.py，覆盖在 tests/test_cuda_parallel_rows.py。
+CUDA 通用算子会缓存最多 128 项只读索引参数；较宽的 LayerNorm / 连续轴 Softmax 使用并行归约，较大的 FP32 矩阵使用 64×64 分块。Python 常数除法在主机检查除零，避免 GPU 状态读回；Tensor 除数保持原有检查。相关实现位于 backends/cuda.py、backends/cuda/nn.cu、backends/cuda/gemm.cu 和 core/operations/elementwise.py，覆盖在 tests/test_cuda_parallel_rows.py。
 
 ## 教程
 

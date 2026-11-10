@@ -26,9 +26,9 @@ def _runtime():
     """导入模块不探测设备、不加载系统 GPU 库，也不要求编译工具。"""
     if sys.platform != "darwin" or platform.machine() != "arm64":
         raise RuntimeError("apple 后端需要 Apple Silicon Mac")
-    native = Path(__file__).parent / "native"
-    bridge = native / "apple.mm"
-    shaders = "\n".join(path.read_text() for path in sorted(native.glob("apple*.metal")))
+    sources = Path(__file__).parent / "apple"
+    bridge = sources / "apple.mm"
+    shaders = "\n".join(path.read_text() for path in sorted(sources.glob("apple*.metal")))
     fingerprint = sha256(bridge.read_bytes() + shaders.encode()).hexdigest()[:16]
     library = Path(gettempdir()) / "qutai-apple" / fingerprint / "apple.dylib"
     if not library.exists():
