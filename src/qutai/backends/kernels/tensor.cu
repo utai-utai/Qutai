@@ -39,8 +39,19 @@ extern "C" __global__ void unary(const T* a,const T* g,T* out,I n,I op,R factor,
     if(op==6) out[i]=(R)g[i]*(((R)1+erf(x/sqrt((R)2)))/(R)2+x*exp(-x*x/(R)2)/sqrt((R)6.2831853071795864769));
     if(op==7) out[i]=exp(x);
     if(op==8) { if(x<=0) atomicExch(status,1ULL); out[i]=log(x); }
+    if(op==9) out[i]=tanh(x);
+    if(op==10) out[i]=atan(x);
+    if(op==11) { R y=tanh(x); out[i]=(R)g[i]*((R)1-y*y); }
+    if(op==12) out[i]=(R)g[i]/((R)1+x*x);
+    if(op==13) out[i]=x/factor;
 }
 extern "C" __global__ void gather(const char* a,const I* pos,char* out,I n,I bytes) { IDX; for(I j=0;j<bytes;j++) out[i*bytes+j]=a[pos[i]*bytes+j]; }
+extern "C" __global__ void slice_copy(const char* a,char* out,const I* meta,I n,I rank,I offset,I bytes,I reverse) {
+    IDX; I position=offset, rest=i;
+    for(I d=rank-1;d>=0;d--) { position+=(rest%meta[d])*meta[rank+d]; rest/=meta[d]; }
+    I src=(reverse?i:position)*bytes, dst=(reverse?position:i)*bytes;
+    for(I j=0;j<bytes;j++) out[dst+j]=a[src+j];
+}
 extern "C" __global__ void scatter(const R* a,const I* pos,R* out,I n,I parts) { IDX; atomicAdd(out+pos[i/parts]*parts+i%parts,a[i]); }
 extern "C" __global__ void broadcast(const char* a,char* out,const I* meta,I n,I rank,I bytes) {
     IDX; I x=i, source=0; for(I d=rank;d-->0;) { I coord=x%meta[d]; x/=meta[d]; source+=coord*meta[rank+d]; } for(I j=0;j<bytes;j++) out[i*bytes+j]=a[source*bytes+j];

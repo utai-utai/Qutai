@@ -9,7 +9,7 @@ from ..core.types import LayerLike
 from ..qnn.pqc import PQC
 from .dit import DiT, DiTBlock, TimeEmbedding
 from .layers import (
-    Attention, BatchNorm2d, Conv2d, Embedding, FeedForward, Flatten, GELU, GlobalAvgPool2d,
+    Attention, BatchNorm2d, Conv2d, Dropout, Embedding, FeedForward, Flatten, GELU, GlobalAvgPool2d,
     Identity, LayerNorm, Linear, MaxPool2d, Mean, MultiHeadAttention,
     PatchEmbedding, PositionEmbedding, ReLU, Residual, ResNetBlock, Sequence,
     Softmax, TransformerBlock,
@@ -55,6 +55,7 @@ def _describe_layer(layer: LayerLike[Tensor], indices: dict[Tensor, int], model_
         elif type(layer) is TimeEmbedding:
             structure.update(type="TimeEmbedding", features=layer.features)
         return structure
+    if type(layer) is Dropout: return {'type': 'Dropout', 'probability': layer.probability, 'random_state': layer.random.getstate()}
     if type(layer) is Identity: return {"type": "Identity"}
     if type(layer) is Linear:
         description = {"type": "Linear", "in_features": layer.weight.shape[0], "out_features": layer.weight.shape[1], "parameters": [indices[p] for p in layer.parameters()]}
@@ -114,6 +115,11 @@ def _restore_layer(structure: dict, parameters: tuple[Tensor, ...], model_type: 
             block = TimeEmbedding(structure["features"], seed=0)
         block.layers = tuple(_restore_layer(child, parameters, model_type, normalizations) for child in structure["layers"])
         return block
+    if kind == 'Dropout':
+        layer = Dropout(structure['probability'])
+        state = structure['random_state']
+        layer.random.setstate((state[0], tuple(state[1]), state[2]))
+        return layer
     if kind == "Identity": return Identity()
     if kind in _CHILDREN:
         if kind == "Attention":

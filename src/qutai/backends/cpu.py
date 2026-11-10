@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterable, Iterator
 import operator
 from functools import lru_cache
 from itertools import product
-from math import erf, exp as scalar_exp, fsum, hypot, log as scalar_log, pi, prod, sqrt
+from math import atan as scalar_atan, tanh as scalar_tanh, erf, exp as scalar_exp, fsum, hypot, log as scalar_log, pi, prod, sqrt
 
 from ..core.shape import broadcast_shape, normalize_axis, reduced_shape, strides, transpose_axes, window_shape
 from ..core.types import Shape
@@ -496,6 +496,14 @@ def gelu_backward(gradient: Storage, values: Storage) -> CPUStorage:
 
 def exp(values: Storage) -> CPUStorage:
     return unary(values, scalar_exp)
+
+
+def tanh(values): return unary(values, scalar_tanh)
+def atan(values): return unary(values, scalar_atan)
+def tanh_backward(gradient, values):
+    return storage((g * (1-scalar_tanh(x)**2) for g,x in zip(gradient,values,strict=True)), dtype=values.dtype)
+def atan_backward(gradient, values):
+    return storage((g / (1+x*x) for g,x in zip(gradient,values,strict=True)), dtype=values.dtype)
 
 
 def log(values: Storage) -> CPUStorage:

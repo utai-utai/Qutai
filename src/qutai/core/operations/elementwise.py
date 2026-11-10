@@ -55,6 +55,15 @@ def divide(left: Operand, right: Operand) -> Computation:
     return _binary(left, right, "divide", _divide_backward)
 
 
+def divide_scalar(data: Operand, value: float) -> Computation:
+    backend = get_backend(data.storage)
+    return backend.divide_scalar(data.storage, value), data.shape, partial(_divide_scalar_backward, value=value)
+
+
+def _divide_scalar_backward(gradient: Storage, value: float) -> tuple[Storage, ...]:
+    return (get_backend(gradient).divide_scalar(gradient, value),)
+
+
 def _divide_backward(gradient: Storage, left: Operand, right: Operand) -> tuple[Storage, ...]:
     """两边分别接收 g/b、-g*a/b²，并还原广播。"""
     backend = get_backend(gradient.device)
@@ -116,6 +125,12 @@ def _exp_backward(gradient: Storage, tensor: Operand) -> tuple[Storage, ...]:
 
 def log(data: Operand) -> Computation:
     return _unary(data, "log", _log_backward)
+
+
+def tanh(data): return _unary(data, 'tanh', _tanh_backward)
+def atan(data): return _unary(data, 'atan', _atan_backward)
+def _tanh_backward(gradient, tensor): return (get_backend(gradient.device).tanh_backward(gradient, tensor.storage),)
+def _atan_backward(gradient, tensor): return (get_backend(gradient.device).atan_backward(gradient, tensor.storage),)
 
 
 def _log_backward(gradient: Storage, tensor: Operand) -> tuple[Storage, ...]:

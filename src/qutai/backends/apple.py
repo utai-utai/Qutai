@@ -285,6 +285,12 @@ def gelu_backward(gradient: AppleStorage, values: AppleStorage) -> AppleStorage:
     return _run('math_unary', values.size, values, gradient, meta=(3,))
 
 
+def tanh(values): return _run('math_unary', values.size, values, meta=(5,))
+def atan(values): return _run('math_unary', values.size, values, meta=(6,))
+def tanh_backward(gradient, values): return _run('math_unary', values.size, values, gradient, meta=(7,))
+def atan_backward(gradient, values): return _run('math_unary', values.size, values, gradient, meta=(8,))
+
+
 def gather(values: AppleStorage, positions) -> AppleStorage:
     indices = positions if isinstance(positions, AppleStorage) else storage(positions, dtype='int64')
     return _run('gather_float' if values.dtype == 'float32' else 'gather_wide', indices.size, values, indices)

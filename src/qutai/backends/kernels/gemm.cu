@@ -59,6 +59,47 @@ extern "C" __global__ void gemm_tiled(const AT* a,const BT* b,OT* out,I M,I K,I 
     if(row+16<M&&col+16<N) store_value(out+(row+16)*N+col+16,c11,accumulate);
 }
 
+extern "C" __global__ void gemm_register(const AT* a,const BT* b,OT* out,I M,I K,I N,I sa,I sb,I ta,I tb,I accumulate) {
+    __shared__ R A[64][33], B[32][65];
+    int x=threadIdx.x,y=threadIdx.y,tid=y*16+x;
+    I br=(I)blockIdx.y*64,bc=(I)blockIdx.x*64;
+    a+=blockIdx.z*sa;b+=blockIdx.z*sb;out+=blockIdx.z*M*N;
+    R sums[4][4]={};
+    for(I start=0;start<K;start+=32) {
+        for(int i=tid;i<64*32;i+=256) {
+            int r=ta?i%64:i/32,k=ta?i/64:i%32;
+            I gr=br+r,gk=start+k;
+            A[r][k]=(gr<M&&gk<K)?read_value(a[ta?gk*M+gr:gr*K+gk]):0;
+        }
+        for(int i=tid;i<32*64;i+=256) {
+            int k=tb?i%32:i/64,c=tb?i/32:i%64;
+            I gk=start+k,gc=bc+c;
+            B[k][c]=(gk<K&&gc<N)?read_value(b[tb?gc*K+gk:gk*N+gc]):0;
+        }
+        __syncthreads();
+        #pragma unroll
+        for(int k=0;k<32;k++) {
+            R aa[4],bb[4];
+            #pragma unroll
+            for(int i=0;i<4;i++) { aa[i]=A[y+i*16][k];bb[i]=B[k][x+i*16]; }
+            #pragma unroll
+            for(int i=0;i<4;i++) {
+                #pragma unroll
+                for(int j=0;j<4;j++) sums[i][j]+=aa[i]*bb[j];
+            }
+        }
+        __syncthreads();
+    }
+    #pragma unroll
+    for(int i=0;i<4;i++) {
+        #pragma unroll
+        for(int j=0;j<4;j++) {
+            I r=br+y+i*16,c=bc+x+j*16;
+            if(r<M&&c<N) store_value(out+r*N+c,sums[i][j],accumulate);
+        }
+    }
+}
+
 // 四个 warp 覆盖 64x64，每个 warp 保留四个 16x16 FP32 累加片段。
 
 #if __CUDA_ARCH__ >= 800

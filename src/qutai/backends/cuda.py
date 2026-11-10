@@ -1,6 +1,7 @@
 from array import array
 from collections.abc import Iterable
 from ctypes import c_uint64, c_longlong, c_float, c_double
+from functools import lru_cache
 from math import prod
 from pathlib import Path
 from secrets import randbits
@@ -69,12 +70,12 @@ def _s(value, dtype):
     return (c_float if dtype in ("float32", "complex64", "bfloat16") else c_double)(value)
 
 
-def _launch(name, size, *arguments, dtype="float32", source="tensor.cu"):
+def _launch(name, size, *arguments, dtype="float32", source="tensor.cu", block=False):
     if dtype == "bfloat16" and source != "tensor.cu":
         raise ValueError("此算子尚未实现 BF16 存储；请转换为 float32")
     real = "float" if dtype in ("float32", "complex64", "bfloat16") else "double"
     options = (f"-DREAL={real}",) + (("-DBFLOAT16=1",) if dtype == "bfloat16" else ())
-    get_runtime().launch(Path(__file__).parent / "kernels" / source, name, size, list(arguments), options=options)
+    get_runtime().launch(Path(__file__).parent / "kernels" / source, name, size * 256 if block else size, list(arguments), options=options)
 
 
 def is_available() -> bool:
@@ -105,6 +106,11 @@ def storage(values: Iterable = (), *, dtype="float64"):
     result = CUDAStorage(len(buffer) // parts, dtype)
     result.runtime.upload(result.ptr, buffer)
     return result
+
+
+@lru_cache(maxsize=128)
+def _metadata(runtime, values):
+    return storage(values, dtype='int64')
 
 
 def full(size, value=0.0, *, dtype="float64"):
@@ -181,6 +187,12 @@ def add(left, right): return _binary(left, right, 0)
 def subtract(left, right): return _binary(left, right, 1)
 def multiply(left, right): return _binary(left, right, 2)
 def divide(left, right): return _binary(left, right, 3)
+
+
+def divide_scalar(values, value):
+    value = _s(value, values.dtype).value
+    if value == 0 and values.size: raise ZeroDivisionError('除数不能为零')
+    return _unary(values, 13, factor=value)
 def negate(values): return _unary(values, 0)
 def square(values): return _unary(values, 1)
 def scale(values, factor): return _unary(values, 2, factor)
@@ -190,6 +202,10 @@ def gelu(values): return _unary(values, 5)
 def gelu_backward(gradient, values): return _unary(values, 6, gradient=gradient)
 def exp(values): return _unary(values, 7)
 def log(values): return _unary(values, 8)
+def tanh(values): return _unary(values, 9)
+def atan(values): return _unary(values, 10)
+def tanh_backward(gradient, values): return _unary(values, 11, gradient=gradient)
+def atan_backward(gradient, values): return _unary(values, 12, gradient=gradient)
 
 
 def gather(values, positions):
@@ -210,11 +226,27 @@ def scatter(values, positions, size):
     return result
 
 
+def _slice(values, shape, steps, offset, size=None):
+    result = full(size, dtype=values.dtype) if size is not None else CUDAStorage(prod(shape), values.dtype)
+    meta = _metadata(get_runtime(), (*shape, *steps))
+    _launch('slice_copy', prod(shape), _p(values), _p(result), _p(meta), _i(prod(shape)), _i(len(shape)),
+            _i(offset), _i(_TYPES[values.dtype][1]), _i(size is not None))
+    return result
+
+
+def gather_slice(values, shape, steps, offset):
+    return _slice(values, shape, steps, offset)
+
+
+def scatter_slice(values, shape, steps, offset, size):
+    return _slice(values, shape, steps, offset, size)
+
+
 def broadcast(values, shape, target):
     if shape == target: return values
     padded = (1,) * (len(target) - len(shape)) + shape
     steps = tuple(0 if length == 1 else step for length, step in zip(padded, strides(padded)))
-    meta = storage((*target, *steps), dtype="int64")
+    meta = _metadata(get_runtime(), (*target, *steps))
     result = CUDAStorage(prod(target), values.dtype)
     _launch("broadcast", result.size, _p(values), _p(result), _p(meta), _i(result.size), _i(len(target)), _i(_TYPES[values.dtype][1]), dtype=values.dtype)
     return result
@@ -224,7 +256,7 @@ def transpose(values, shape, axes=None):
     axes = transpose_axes(len(shape), axes)
     target = tuple(shape[a] for a in axes)
     steps = strides(shape)
-    meta = storage((*target, *(steps[a] for a in axes)), dtype="int64")
+    meta = _metadata(get_runtime(), (*target, *(steps[a] for a in axes)))
     result = CUDAStorage(values.size, values.dtype)
     _launch("broadcast", result.size, _p(values), _p(result), _p(meta), _i(result.size), _i(len(shape)), _i(_TYPES[values.dtype][1]), dtype=values.dtype)
     return result
@@ -314,6 +346,8 @@ def gemm(left, right, rows, inner, cols, *, batch=1, transpose_left=False, trans
     tile_m = tile_n = 64 if mixed else 32
     name = "gemm_bf16" if mixed else "gemm_tiled"
     block = (128, 1, 1) if mixed else (16, 16, 1)
+    if not mixed and not double and rows >= 64 and cols >= 64 and inner >= 32:
+        name, tile_m, tile_n = 'gemm_register', 64, 64
     if mixed and inner >= 128:
         if (rows >= 1024 and cols >= 1024) or (rows >= 128 and cols >= 8192):
             name, tile_m, tile_n, block = "gemm_bf16_wide", 128, 128, (256, 1, 1)
@@ -433,7 +467,8 @@ def softmax(values, shape, axis):
     width, inner = shape[axis], prod(shape[axis + 1:])
     groups = values.size // width
     result = CUDAStorage(values.size, dtype=values.dtype)
-    _launch("softmax_forward", groups, _p(result), _p(values), _i(groups), _i(width), _i(inner), dtype=values.dtype, source="nn.cu")
+    parallel = inner == 1 and width >= 64
+    _launch("softmax_rows" if parallel else "softmax_forward", groups, _p(result), _p(values), _i(groups), _i(width), _i(inner), dtype=values.dtype, source="nn.cu", block=parallel)
     return result
 
 
@@ -525,8 +560,8 @@ def layer_norm(values, weight, bias, width, eps):
     groups = values.size // width
     result, normalized = CUDAStorage(values.size, dtype=values.dtype), CUDAStorage(values.size, dtype=values.dtype)
     inverse = CUDAStorage(groups, dtype=values.dtype)
-    _launch("layer_norm_forward", groups, _p(result), _p(normalized), _p(inverse), _p(values), _p(weight), _p(bias),
-            _i(groups), _i(width), _s(eps, values.dtype), dtype=values.dtype, source="nn.cu")
+    _launch("layer_norm_rows" if width >= 64 else "layer_norm_forward", groups, _p(result), _p(normalized), _p(inverse), _p(values), _p(weight), _p(bias),
+            _i(groups), _i(width), _s(eps, values.dtype), dtype=values.dtype, source="nn.cu", block=width >= 64)
     return result, normalized, inverse
 
 
@@ -534,7 +569,7 @@ def layer_norm_backward(gradient, normalized, inverse, weight):
     width, groups = weight.size, inverse.size
     dx = CUDAStorage(gradient.size, dtype=gradient.dtype)
     dw, db = CUDAStorage(width, dtype=gradient.dtype), CUDAStorage(width, dtype=gradient.dtype)
-    _launch("layer_norm_input_backward", groups, _p(dx), _p(gradient), _p(normalized), _p(inverse), _p(weight), _i(groups), _i(width), dtype=gradient.dtype, source="nn.cu")
+    _launch("layer_norm_input_rows" if width >= 64 else "layer_norm_input_backward", groups, _p(dx), _p(gradient), _p(normalized), _p(inverse), _p(weight), _i(groups), _i(width), dtype=gradient.dtype, source="nn.cu", block=width >= 64)
     _launch("norm_parameter_backward", width, _p(dw), _p(db), _p(gradient), _p(normalized), _i(groups), _i(width), _i(1), dtype=gradient.dtype, source="nn.cu")
     return dx, dw, db
 

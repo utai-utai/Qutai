@@ -1,8 +1,10 @@
 from functools import partial
+from types import SimpleNamespace
 
+from ...backends import cuda_lm
 from ...backends.device import get_backend
 from ...backends.storage import Storage
-from ..shape import flatten_indices, index_positions, infer_shape, normalize_axis, reshape_shape, transpose_axes
+from ..shape import flatten_indices, index_layout, layout_positions, infer_shape, normalize_axis, reshape_shape, transpose_axes
 from ..types import Computation, Index, IntegerData, Operand, Shape
 
 
@@ -13,6 +15,9 @@ def embedding(indices: IntegerData, weight: Operand) -> Computation:
     if weight.ndim != 2 or any(size <= 0 for size in weight.shape): raise ValueError("嵌入权重必须为非空的二维表格（编号数量，特征数）")
     count, features = weight.shape
     if any(index < 0 or index >= count for index in identifiers): raise IndexError("嵌入编号超出权重表范围")
+    if weight.storage.device == 'cuda' and weight.storage.dtype in ('float32', 'float64'):
+        values = cuda_lm.embedding(weight.storage, identifiers, features)
+        return values, (*shape, features), partial(_embedding_backward, identifiers=identifiers, count=count, features=features)
     positions = [index * features + feature for index in identifiers for feature in range(features)]
     backend = get_backend(weight.storage.device)
     values = backend.gather(weight.storage, positions)
@@ -21,10 +26,46 @@ def embedding(indices: IntegerData, weight: Operand) -> Computation:
 
 def select(data: Operand, index: Index) -> Computation:
     """按索引读取数据；反向时将梯度加回原来的位置。"""
-    shape, positions = index_positions(data.shape, index)
+    shape, steps, offset = index_layout(data.shape, index)
     backend = get_backend(data.storage.device)
-    values = backend.gather(data.storage, positions)
-    return values, shape, partial(_select_backward, positions=positions, size=data.size)
+    values = (backend.gather_slice(data.storage, shape, steps, offset) if hasattr(backend, 'gather_slice') else
+              backend.gather(data.storage, layout_positions(shape, steps, offset)))
+    return values, shape, partial(_slice_backward, shape=shape, steps=steps, offset=offset, size=data.size)
+
+
+def _slice_backward(gradient, shape, steps, offset, size):
+    backend = get_backend(gradient.device)
+    values = (backend.scatter_slice(gradient, shape, steps, offset, size) if hasattr(backend, 'scatter_slice') else
+              backend.scatter(gradient, layout_positions(shape, steps, offset), size))
+    return (values,)
+
+
+def _embedding_backward(gradient, identifiers, count, features):
+    return (cuda_lm.embedding_backward(gradient, identifiers, count, features),)
+
+
+def concatenate(data: tuple[Operand, ...], axis: int = 0) -> Computation:
+    if not data: raise ValueError('concatenate 至少需要一个张量')
+    axis = normalize_axis(axis, data[0].ndim)
+    target = list(data[0].shape)
+    if any(item.ndim != len(target) or any(a != b for i, (a, b) in enumerate(zip(item.shape, target)) if i != axis) for item in data):
+        raise ValueError('concatenate 除拼接轴以外的形状必须相同')
+    target[axis] = sum(item.shape[axis] for item in data)
+    backend = get_backend(*(item.storage for item in data))
+    if any(item.dtype != data[0].dtype for item in data): raise ValueError('concatenate 精度必须相同')
+    values = backend.concatenate(tuple(item.storage for item in data), tuple(item.shape for item in data), axis)
+    return values, tuple(target), partial(_concatenate_backward, shape=tuple(target), sizes=tuple(item.shape[axis] for item in data), axis=axis)
+
+
+def _concatenate_backward(gradient, shape, sizes, axis):
+    source = SimpleNamespace(storage=gradient, shape=shape, size=gradient.size)
+    result, start = [], 0
+    for size in sizes:
+        index = [slice(None)] * len(shape)
+        index[axis] = slice(start, start + size)
+        result.append(select(source, tuple(index))[0])
+        start += size
+    return tuple(result)
 
 
 def _select_backward(gradient: Storage, positions: list[int], size: int) -> tuple[Storage, ...]:

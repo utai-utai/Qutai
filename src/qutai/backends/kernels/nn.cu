@@ -2,6 +2,68 @@
 typedef REAL real;
 typedef long long index_t;
 
+__device__ real row_reduce(real value, bool maximum=false) {
+    __shared__ real warps[8];
+    int lane=threadIdx.x%32, warp=threadIdx.x/32;
+    for(int offset=16;offset;offset/=2) {
+        real other=__shfl_down_sync(0xffffffff,value,offset);
+        value=maximum?fmax(value,other):value+other;
+    }
+    if(lane==0) warps[warp]=value;
+    __syncthreads();
+    value=threadIdx.x<8?warps[lane]:(maximum?-(real)__int_as_float(0x7f800000):(real)0);
+    if(warp==0) {
+        for(int offset=16;offset;offset/=2) {
+            real other=__shfl_down_sync(0xffffffff,value,offset);
+            value=maximum?fmax(value,other):value+other;
+        }
+        if(lane==0) warps[0]=value;
+    }
+    __syncthreads();
+    value=warps[0];
+    __syncthreads();
+    return value;
+}
+
+extern "C" __global__ void softmax_rows(real* out,const real* x,index_t groups,index_t width,index_t inner) {
+    index_t start=(index_t)blockIdx.x*width;
+    real peak=-(real)__int_as_float(0x7f800000);
+    for(index_t k=threadIdx.x;k<width;k+=256) peak=fmax(peak,x[start+k]);
+    peak=row_reduce(peak,true);
+    real total=0;
+    for(index_t k=threadIdx.x;k<width;k+=256) total+=exp(x[start+k]-peak);
+    total=row_reduce(total);
+    for(index_t k=threadIdx.x;k<width;k+=256) out[start+k]=exp(x[start+k]-peak)/total;
+}
+
+extern "C" __global__ void layer_norm_rows(real* out,real* normalized,real* inverse,
+    const real* x,const real* w,const real* bias,index_t groups,index_t width,real eps) {
+    index_t start=(index_t)blockIdx.x*width;
+    real average=0;
+    for(index_t k=threadIdx.x;k<width;k+=256) average+=x[start+k];
+    average=row_reduce(average)/width;
+    real variance=0;
+    for(index_t k=threadIdx.x;k<width;k+=256) { real v=x[start+k]-average;variance+=v*v; }
+    real scale=(real)1/sqrt(row_reduce(variance)/width+eps);
+    if(threadIdx.x==0) inverse[blockIdx.x]=scale;
+    for(index_t k=threadIdx.x;k<width;k+=256) {
+        real value=(x[start+k]-average)*scale;
+        normalized[start+k]=value;out[start+k]=value*w[k]+bias[k];
+    }
+}
+
+extern "C" __global__ void layer_norm_input_rows(real* out,const real* g,const real* normalized,
+    const real* inverse,const real* w,index_t groups,index_t width) {
+    index_t start=(index_t)blockIdx.x*width;
+    real average=0,projected=0;
+    for(index_t k=threadIdx.x;k<width;k+=256) {
+        real value=g[start+k]*w[k];average+=value;projected+=value*normalized[start+k];
+    }
+    average=row_reduce(average)/width;projected=row_reduce(projected)/width;
+    for(index_t k=threadIdx.x;k<width;k+=256)
+        out[start+k]=inverse[blockIdx.x]*(g[start+k]*w[k]-average-normalized[start+k]*projected);
+}
+
 extern "C" __global__ void softmax_forward(real* out, const real* x, index_t groups, index_t width, index_t inner) {
     index_t g = (index_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (g >= groups) return;

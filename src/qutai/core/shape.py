@@ -54,8 +54,8 @@ def strides(shape: Shape) -> tuple[int, ...]:
     return tuple(prod(shape[axis + 1:]) for axis in range(len(shape)))
 
 
-def index_positions(shape: Shape, index: Index) -> tuple[Shape, list[int]]:
-    """将整数、切片、... 和新增轴转换成结果形状与原数据的位置。"""
+def index_layout(shape: Shape, index: Index) -> tuple[Shape, tuple[int, ...], int]:
+    """基本索引只保存各轴步长与起点，不展开逐元素索引。"""
     selectors = index if isinstance(index, tuple) else (index,)
     consumed = sum(part is not None and part is not Ellipsis for part in selectors)
     ellipses = sum(part is Ellipsis for part in selectors)
@@ -66,27 +66,38 @@ def index_positions(shape: Shape, index: Index) -> tuple[Shape, list[int]]:
         expanded.extend([slice(None)] * (len(shape) - consumed) if part is Ellipsis else [part])
     if not ellipses: expanded.extend([slice(None)] * (len(shape) - consumed))
 
-    target, choices = [], []
+    target, selected_steps, offset = [], [], 0
     steps = strides(shape)
     axis = 0
     for part in expanded:
         if part is None:
             target.append(1)
+            selected_steps.append(0)
             continue
         length, step = shape[axis], steps[axis]
         if isinstance(part, int):
             position = part + length if part < 0 else part
             if not 0 <= position < length: raise IndexError(f"第 {axis} 轴的索引 {part} 超出范围")
-            choices.append([position * step])
+            offset += position * step
         elif isinstance(part, slice):
             if part.step == 0: raise ValueError("切片步长不能为零")
             positions = range(*part.indices(length))
             target.append(len(positions))
-            choices.append([position * step for position in positions])
+            selected_steps.append(positions.step * step)
+            offset += positions.start * step
         else:
             raise TypeError("索引只支持整数、切片、省略号和 None")
         axis += 1
-    return tuple(target), [sum(items) for items in product(*choices)]
+    return tuple(target), tuple(selected_steps), offset
+
+
+def layout_positions(shape: Shape, steps: tuple[int, ...], offset: int):
+    return (offset + sum(i * step for i, step in zip(indices, steps)) for indices in product(*(range(n) for n in shape)))
+
+
+def index_positions(shape: Shape, index: Index) -> tuple[Shape, list[int]]:
+    target, steps, offset = index_layout(shape, index)
+    return target, list(layout_positions(target, steps, offset))
 
 
 def normalize_axis(axis: int, ndim: int) -> int:

@@ -77,6 +77,10 @@ kernel void math_unary(device const float *a [[buffer(0)]], device const float *
         case 2: out[i] = x * (1 + erf_value(x * 0.7071067811865475f)) * 0.5f; break;
         case 3: out[i] = b[i] * ((1 + erf_value(x * 0.7071067811865475f))*0.5f + x*exp(-x*x*0.5f)*0.3989422804014327f); break;
         case 4: out[i] = rsqrt(x); break;
+        case 5: out[i] = tanh(x); break;
+        case 6: out[i] = atan(x); break;
+        case 7: { float y=tanh(x); out[i] = b[i]*(1-y*y); break; }
+        case 8: out[i] = b[i]/(1+x*x); break;
     }
 }
 

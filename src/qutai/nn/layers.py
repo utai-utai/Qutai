@@ -1,8 +1,10 @@
 from collections.abc import Iterable
 from math import prod
 from random import Random
+from statistics import NormalDist
 from typing import Self
 
+from ..backends import cuda
 from ..backends.device import get_backend
 from ..backends.storage import Storage
 from ..core.context import is_training, set_recording
@@ -51,6 +53,26 @@ class Layer:
     def __add__(self, other: LayerLike[Tensor]) -> Residual:
         """两边接收同一份输入，再将同形状的输出相加。"""
         return Residual(self, other)
+
+
+class Dropout(Layer):
+    def __init__(self, probability=.5, *, seed=None):
+        super().__init__()
+        if not 0 <= probability < 1: raise ValueError('probability 必须在 [0, 1) 内')
+        self.probability, self.random = probability, Random(seed)
+
+    def __call__(self, data, train=None):
+        x = self._input(data)
+        if not is_training() or train is False or not self.probability: return x
+        keep = 1 - self.probability
+        if x.device == 'cuda':
+            dtype = 'float32' if x.dtype == 'bfloat16' else x.dtype
+            noise = cuda.normal(x.size, mean=-NormalDist().inv_cdf(self.probability), seed=self.random.randrange(2**63), dtype=dtype)
+            values = cuda.relu_backward(cuda.full(x.size, 1/keep, dtype=dtype), noise)
+            mask = Tensor(values, shape=x.shape).to(dtype=x.dtype)
+        else:
+            mask = Tensor([float(self.random.random() < keep)/keep for _ in range(x.size)], shape=x.shape, device=x.device, dtype=x.dtype)
+        return x * mask
 
 
 class Sequence(Layer):

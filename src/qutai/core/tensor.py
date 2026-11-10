@@ -7,7 +7,7 @@ from ..backends.device import default_dtype, get_backend, transfer
 from ..backends.storage import Storage
 from . import grad as autograd
 from . import operations
-from .shape import flatten, infer_shape, unflatten
+from .shape import flatten, infer_shape, normalize_axis, unflatten
 from .types import Backward, Computation, Data, Index, Indices, IntegerData, Result, Shape
 
 
@@ -72,6 +72,26 @@ class Tensor:
     def __getitem__(self, index: Index) -> Tensor:
         return _result(operations.select(self, index), (self,))
 
+    def split(self, sections: int, axis: int = -1) -> tuple[Tensor, ...]:
+        """沿指定轴等分，sections 必须为正整数且整除该轴长度。"""
+        axis = normalize_axis(axis, self.ndim)
+        if type(sections) is not int or sections < 1 or self.shape[axis] % sections:
+            raise ValueError('sections 必须为正整数且整除轴长度')
+        width = self.shape[axis] // sections
+        result = []
+        for i in range(sections):
+            index = [slice(None)] * self.ndim
+            index[axis] = slice(i * width, (i + 1) * width)
+            result.append(self[tuple(index)])
+        return tuple(result)
+
+    def copy_(self, source: Tensor) -> Tensor:
+        """原地复制同形状、设备和精度的数值，不建立计算图。"""
+        if (self.shape, self.device, self.dtype) != (source.shape, source.device, source.dtype):
+            raise ValueError('复制的形状、设备和精度必须一致')
+        get_backend(self.device).copy_into(self.storage, source.storage)
+        return self
+
     def __add__(self, other: Data | Tensor) -> Tensor:
         other = _as_tensor(other, self)
         return _result(operations.add(self, other), (self, other))
@@ -97,6 +117,8 @@ class Tensor:
         return _result(operations.multiply(other, self), (other, self))
 
     def __truediv__(self, other: Data | Tensor) -> Tensor:
+        if isinstance(other, (int, float)) and self.device == 'cuda' and self.dtype in ('float32', 'float64'):
+            return _result(operations.divide_scalar(self, other), (self,))
         other = _as_tensor(other, self)
         return _result(operations.divide(self, other), (self, other))
 
@@ -135,6 +157,12 @@ class Tensor:
 
     def log(self) -> Tensor:
         return _result(operations.log(self), (self,))
+
+    def tanh(self) -> Tensor:
+        return _result(operations.tanh(self), (self,))
+
+    def atan(self) -> Tensor:
+        return _result(operations.atan(self), (self,))
 
     def argmax(self, axis: int | None = None, keepdims: bool = False) -> Indices:
         return operations.argmax(self, axis=axis, keepdims=keepdims)
@@ -239,6 +267,7 @@ def multiply(left: Data | Tensor, right: Data | Tensor) -> Result | Tensor:
 
 def divide(left: Data | Tensor, right: Data | Tensor) -> Result | Tensor:
     """广播相除，保留求导关系。"""
+    if isinstance(right, (int, float)): return _output(_as_tensor(left) / right, left, right)
     a, b = _pair(left, right)
     return _output(a / b, left, right)
 
@@ -274,6 +303,14 @@ def gelu(data: Data | Tensor) -> Result | Tensor:
 def exp(data: Data | Tensor) -> Result | Tensor:
     """逐元素计算以 e 为底的指数。"""
     return _output(_as_tensor(data).exp(), data)
+
+
+def tanh(data: Data | Tensor) -> Result | Tensor:
+    return _output(_as_tensor(data).tanh(), data)
+
+
+def atan(data: Data | Tensor) -> Result | Tensor:
+    return _output(_as_tensor(data).atan(), data)
 
 
 def log(data: Data | Tensor) -> Result | Tensor:
@@ -324,6 +361,11 @@ def transpose(data: Data | Tensor, axes: tuple[int, ...] | None = None) -> Resul
 def select(data: Data | Tensor, index: Index) -> Result | Tensor:
     """按索引读取数据；反向时将梯度加回原来的位置。"""
     return _output(_as_tensor(data)[index], data)
+
+
+def concatenate(data: Iterable[Tensor], axis: int = 0) -> Tensor:
+    items = tuple(_as_tensor(item) for item in data)
+    return _result(operations.concatenate(items, axis), items)
 
 
 def embedding(indices: IntegerData, weight: Data | Tensor) -> Result | Tensor:
