@@ -29,6 +29,8 @@ print(x.grad.tolist())  # [2.0, 4.0, 6.0]
 
 统一在创建时指定设备，例如 `Tensor(..., device="apple")`、`nn.Linear(2, 1, device="apple")` 或 `nn.Model([...], device="apple")`。设备可选 `cpu / apple / cuda`，精度自动选择：CPU 默认 float64 / complex128，Apple 和 CUDA 默认 float32 / complex64。模型会统一内部各层的设备；有特殊需求时仍可显式指定 `dtype`。
 
+展平、池化、激活和求平均等基础运算层可直接接收数据，例如 `nn.Flatten(x)`、`nn.GlobalAvgPool2d(x)`、`nn.ReLU(x)`。组装模型时省略数据，仍写 `nn.Model([nn.ReLU(), nn.Flatten()])`。
+
 ## 模块
 
 | 模块 | 功能 |

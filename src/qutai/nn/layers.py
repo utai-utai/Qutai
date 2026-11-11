@@ -55,6 +55,23 @@ class Layer:
         return Residual(self, other)
 
 
+class _DirectLayer(type):
+    """无权重层：传数据就计算，不传数据就创建可复用的层。"""
+    def __call__(cls, *args, **kwargs):
+        data = kwargs.pop("data", None)
+        if data is None and args:
+            first = args[0]
+            direct = isinstance(first, (Tensor, list)) or cls.__init__ is Layer.__init__
+            direct = direct or isinstance(first, tuple) and not getattr(cls, "_tuple_option", False)
+            if direct: data, args = first, args[1:]
+        layer = super().__call__(*args, **kwargs)
+        return layer if data is None else layer(data)
+
+
+class _OperationLayer(Layer, metaclass=_DirectLayer):
+    """支持层对象和直接计算两种用法。"""
+
+
 class Dropout(Layer):
     def __init__(self, probability: float = 0.5, *, seed: int | None = None, device: str | None = None, dtype: str | None = None) -> None:
         super().__init__(device=device, dtype=dtype)
@@ -92,7 +109,7 @@ class Sequence(Layer):
         return tuple(dict.fromkeys(parameter for layer in self.layers for parameter in layer.parameters()))
 
 
-class Identity(Layer):
+class Identity(_OperationLayer):
     """原样传递输入，不增加计算或参数。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
         return self._input(data)
@@ -156,8 +173,9 @@ class Conv2d(Layer):
         return (self.weight,) if self.bias is None else (self.weight, self.bias)
 
 
-class MaxPool2d(Layer):
+class MaxPool2d(_OperationLayer):
     """按窗口取最大值，默认步长等于窗口尺寸，没有可训练参数。"""
+    _tuple_option = True
     def __init__(self, kernel_size: int | tuple[int, int], *, stride: int | tuple[int, int] | None = None, padding: int | tuple[int, int] = 0, device: str | None = None, dtype: str | None = None) -> None:
         super().__init__(device=device, dtype=dtype)
         self.kernel_size = pair(kernel_size)
@@ -171,7 +189,7 @@ class MaxPool2d(Layer):
         return max_pool2d(tensor, self.kernel_size, stride=self.stride, padding=self.padding)
 
 
-class Flatten(Layer):
+class Flatten(_OperationLayer):
     """从指定轴展平至末尾，默认保留第一个批次轴。"""
     def __init__(self, start_dim: int = 1, *, device: str | None = None, dtype: str | None = None) -> None:
         super().__init__(device=device, dtype=dtype)
@@ -207,7 +225,7 @@ class BatchNorm2d(Layer):
         return self.weight, self.bias
 
 
-class GlobalAvgPool2d(Layer):
+class GlobalAvgPool2d(_OperationLayer):
     """将每个通道的整张特征图取平均，NCHW 变为 NC。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
         tensor = self._input(data)
@@ -215,21 +233,21 @@ class GlobalAvgPool2d(Layer):
         return mean(mean(tensor, axis=-1), axis=-1)
 
 
-class ReLU(Layer):
+class ReLU(_OperationLayer):
     """逐元素保留正数，将其余值置零。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
         tensor = self._input(data)
         return relu(tensor)
 
 
-class GELU(Layer):
+class GELU(_OperationLayer):
     """平滑的逐元素激活，使用标准正态分布的精确定义。"""
     def __call__(self, data: Data | Tensor) -> Tensor:
         tensor = self._input(data)
         return gelu(tensor)
 
 
-class Mean(Layer):
+class Mean(_OperationLayer):
     """沿指定轴取平均，例如 axis=1 将一段序列汇总成一个向量。"""
     def __init__(self, axis: int | None = 1, *, keepdims: bool = False, device: str | None = None, dtype: str | None = None) -> None:
         super().__init__(device=device, dtype=dtype)
@@ -256,7 +274,7 @@ class LayerNorm(Layer):
         return self.weight, self.bias
 
 
-class Softmax(Layer):
+class Softmax(_OperationLayer):
     """沿指定轴把各项得分转换为总和为 1 的概率，无可训练参数。"""
     def __init__(self, axis: int = -1, *, device: str | None = None, dtype: str | None = None) -> None:
         super().__init__(device=device, dtype=dtype)
