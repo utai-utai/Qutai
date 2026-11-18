@@ -133,7 +133,7 @@ int q_matmul(void *a, void *b, void *out, uint32_t rows, uint32_t inner, uint32_
 }
 
 int q_run(const char *name, void **buffers, const uint32_t *meta, uint32_t metaCount,
-          const float *scalars, uint32_t scalarCount, uint64_t count) {
+          const float *scalars, uint32_t scalarCount, uint64_t count, uint32_t groupSize) {
     if (!count) return 1;
     @autoreleasepool {
         NSString *key = [NSString stringWithUTF8String:name];
@@ -153,9 +153,14 @@ int q_run(const char *name, void **buffers, const uint32_t *meta, uint32_t metaC
             [encoder setBuffer:(__bridge id<MTLBuffer>)(buffers[index] ?: buffers[3]) offset:0 atIndex:index];
         [encoder setBytes:meta length:metaCount * sizeof(uint32_t) atIndex:4];
         [encoder setBytes:scalars length:scalarCount * sizeof(float) atIndex:5];
-        NSUInteger width = MIN((NSUInteger)count, pipeline.maxTotalThreadsPerThreadgroup);
-        [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
-            threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+        if (groupSize) {
+            [encoder dispatchThreadgroups:MTLSizeMake(count, 1, 1)
+                   threadsPerThreadgroup:MTLSizeMake(groupSize, 1, 1)];
+        } else {
+            NSUInteger width = MIN((NSUInteger)count, pipeline.maxTotalThreadsPerThreadgroup);
+            [encoder dispatchThreads:MTLSizeMake(count, 1, 1)
+               threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+        }
         [encoder endEncoding];
         if (!finish(command)) return 0;
         ++dispatches;

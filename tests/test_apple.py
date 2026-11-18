@@ -3,6 +3,7 @@
 import subprocess
 import sys
 import unittest
+from math import fsum
 from pathlib import Path
 from random import Random
 from tempfile import TemporaryDirectory
@@ -241,6 +242,36 @@ class AppleTests(unittest.TestCase):
         value = Tensor([1, 2, 3], device='apple', dtype='float32')
         for _ in range(150): value = value * 0.99 + 0.01
         self.assertClose(value.tolist(), [1, 1+0.99**150, 1+2*0.99**150])
+
+    def check_inner_products(self, left, right, dtype):
+        products = [a.conjugate() * b for a, b in zip(left, right, strict=True)]
+        expected = complex(fsum(x.real for x in products), fsum(x.imag for x in products))
+        a = apple.storage(left, dtype=dtype)
+        b = apple.storage(right, dtype=dtype)
+        scale = -2.25
+        with patch.object(apple.AppleStorage, 'tolist', side_effect=AssertionError('内积不能导出 GPU 数组')), \
+             patch.object(cpu, 'inner', side_effect=AssertionError('内积不能回退 CPU')):
+            actual = apple.inner(a, b)
+            real = apple.real_inner(a, b, scale=scale)
+        self.assertEqual((real.device, real.dtype, real.size), ('apple', 'float32', 1))
+        self.assertAlmostEqual(actual.real, expected.real, delta=5e-5)
+        self.assertAlmostEqual(actual.imag, expected.imag, delta=5e-5)
+        self.assertAlmostEqual(real.tolist()[0], scale * expected.real, delta=1e-4)
+
+    def test_inner_products_empty_small_and_odd(self):
+        for size in (0, 1, 19, 1024, 1031):
+            with self.subTest(size=size):
+                left = [complex((i % 13 - 6) / 8, (i % 7 - 3) / 4) for i in range(size)]
+                right = [complex((i % 9 - 4) / 4, (i % 11 - 5) / 8) for i in range(size)]
+                self.check_inner_products(left, right, 'complex64')
+                self.check_inner_products([x.real for x in left], [x.real for x in right], 'float32')
+
+    def test_inner_products_large_odd_with_cancellation(self):
+        # Long runs of large terms hide the small terms in serial float32 accumulation.
+        quarter = 1 << 18
+        values = [1.0] * quarter + [2**-16] * (2 * quarter) + [-1.0] * quarter + [0.25] * 3
+        self.check_inner_products([1.0] * len(values), values, 'float32')
+        self.check_inner_products([1+2j] * len(values), [complex(x, -x) for x in values], 'complex64')
 
     def test_quantum_state_gradients_and_hybrid_serialization(self):
         results = []

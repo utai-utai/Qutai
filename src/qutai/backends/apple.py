@@ -11,6 +11,7 @@ from functools import lru_cache
 from hashlib import sha256
 from math import hypot, prod, sqrt
 from pathlib import Path
+from struct import unpack
 from tempfile import gettempdir
 
 from ..core.shape import broadcast_shape, normalize_axis, reduced_shape, strides, transpose_axes
@@ -50,7 +51,7 @@ def _runtime():
         "q_write_range": (ct.c_int, [ct.c_void_p, ct.c_uint64, ct.c_void_p, ct.c_uint64]),
         "q_copy": (ct.c_int, [ct.c_void_p, ct.c_void_p, ct.c_uint64]), "q_sync": (ct.c_int, []),
         "q_run": (ct.c_int, [ct.c_char_p, ct.POINTER(ct.c_void_p), ct.POINTER(ct.c_uint32), ct.c_uint32,
-                             ct.POINTER(ct.c_float), ct.c_uint32, ct.c_uint64]),
+                             ct.POINTER(ct.c_float), ct.c_uint32, ct.c_uint64, ct.c_uint32]),
     }
     for name, (result_type, arguments) in signatures.items():
         function = getattr(api, name)
@@ -148,7 +149,8 @@ def copy_into(target: AppleStorage, source: AppleStorage) -> None:
 
 
 def _run(name: str, size: int, a: AppleStorage | None = None, b: AppleStorage | None = None,
-         c: AppleStorage | None = None, *, meta: tuple = (), scalars: tuple = (), dtype: str | None = None, out: AppleStorage | None = None) -> AppleStorage:
+         c: AppleStorage | None = None, *, meta: tuple = (), scalars: tuple = (), dtype: str | None = None,
+         out: AppleStorage | None = None, group_size: int = 0) -> AppleStorage:
     dtype = dtype or (a.dtype if a is not None else "float32")
     if name == "pointwise" and dtype == "complex64": name = "complex_pointwise"
     result = AppleStorage(size=size, dtype=dtype) if out is None else out
@@ -156,7 +158,7 @@ def _run(name: str, size: int, a: AppleStorage | None = None, b: AppleStorage | 
     integers = (ct.c_uint32 * (len(meta) + 1))(size, *meta)
     floats = (ct.c_float * max(len(scalars), 1))(*scalars)
     api = result._api
-    _check(api.q_run(name.encode(), buffers, integers, len(integers), floats, len(floats), size), api)
+    _check(api.q_run(name.encode(), buffers, integers, len(integers), floats, len(floats), size, group_size), api)
     return result
 
 
@@ -434,14 +436,38 @@ def collapse(amplitudes: AppleStorage, qubits: int, wires: tuple, outcome: int, 
                 meta=(qubits,len(wires),*(qubits-1-wire for wire in wires),outcome), scalars=(1/sqrt(probability),))
 
 
+# 与 Metal 内积核一致：每组 256 个线程，每个线程最多读 4 项。
+_INNER_GROUP_SIZE = 256
+_INNER_BLOCK_SIZE = 4 * _INNER_GROUP_SIZE
+
+
+def _inner(left: AppleStorage, right: AppleStorage, scale: float, *, real_only: bool) -> AppleStorage:
+    if left.dtype not in ("float32", "complex64"):
+        raise ValueError("Apple 内积只支持 float32 或 complex64")
+    if (left.device, left.dtype, left.size) != (right.device, right.dtype, right.size):
+        raise ValueError("内积存储的设备、精度与元素数量必须相同")
+
+    complex_output = left.dtype == "complex64" and not real_only
+    dtype = "complex64" if complex_output else "float32"
+    sum_kernel = "inner_complex" if complex_output else "inner_real"
+    kernel = "inner_complex_real" if real_only and left.dtype == "complex64" else sum_kernel
+    while True:
+        groups = max(1, (left.size + _INNER_BLOCK_SIZE - 1) // _INNER_BLOCK_SIZE)
+        result = _run(kernel, groups, left, right, meta=(left.size, right is not None),
+                      scalars=(scale if groups == 1 else 1.0,), dtype=dtype, group_size=_INNER_GROUP_SIZE)
+        if groups == 1:
+            return result
+        left, right, kernel = result, None, sum_kernel
+
+
 def inner(left: AppleStorage, right: AppleStorage) -> complex:
-    if left.dtype == 'complex64': return _run('inner_complex', 1, left, right, meta=(left.size,)).tolist()[0]
-    return complex(_run('inner_real', 1, left, right, meta=(left.size,), scalars=(1,)).tolist()[0])
+    result = _inner(left, right, 1.0, real_only=False)
+    # 此接口返回 Python 标量；GPU 归约完成后仅取回最后一个值。
+    return complex(*unpack("ff" if result.dtype == "complex64" else "f", result.read_bytes(0, result.nbytes)))
 
 
 def real_inner(left: AppleStorage, right: AppleStorage, scale: float = 1.0) -> AppleStorage:
-    return _run('inner_complex_real' if left.dtype == 'complex64' else 'inner_real', 1, left, right,
-                meta=(left.size,), scalars=(scale,), dtype='float32')
+    return _inner(left, right, scale, real_only=True)
 
 
 def weighted_sum(values: tuple, weights: AppleStorage) -> AppleStorage:

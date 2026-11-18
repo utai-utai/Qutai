@@ -248,16 +248,50 @@ kernel void quantum_probability_grad(device const float2 *a [[buffer(0)]], devic
     out[i]=a[i]*b[outcome(i,p)];
 }
 
-kernel void inner_real(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device float *out [[buffer(3)]], constant uint *p [[buffer(4)]], constant float *f [[buffer(5)]], uint i [[thread_position_in_grid]]) {
-    float total=0; for(uint k=0;k<p[1];++k) total+=a[k]*b[k]; out[0]=f[0]*total;
+// 每组归约一块；下一次调度继续归约各组写出的部分和。
+enum : uint { inner_width = 256, inner_items = 4 };
+
+template <typename T>
+inline void inner_group_sum(T value, threadgroup T *partial, device T *out, uint group, uint lane, float scale) {
+    partial[lane] = value;
+    for (uint stride = inner_width / 2; stride > 0; stride /= 2) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (lane < stride) partial[lane] += partial[lane + stride];
+    }
+    if (lane == 0) out[group] = partial[0] * scale;
 }
 
-kernel void inner_complex(device const float2 *a [[buffer(0)]], device const float2 *b [[buffer(1)]], device float2 *out [[buffer(3)]], constant uint *p [[buffer(4)]], uint i [[thread_position_in_grid]]) {
-    float2 total=0; for(uint k=0;k<p[1];++k) total+=cmul(cconj(a[k]),b[k]); out[0]=total;
+kernel void inner_real(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]],
+                       device float *out [[buffer(3)]], constant uint *p [[buffer(4)]], constant float *f [[buffer(5)]],
+                       uint group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float partial[inner_width];
+    float total = 0;
+    uint index = group * (inner_width * inner_items) + lane;
+    for (uint i = 0; i < inner_items && index < p[1]; ++i, index += inner_width)
+        total += p[2] ? a[index] * b[index] : a[index];
+    inner_group_sum(total, partial, out, group, lane, f[0]);
 }
 
-kernel void inner_complex_real(device const float2 *a [[buffer(0)]], device const float2 *b [[buffer(1)]], device float *out [[buffer(3)]], constant uint *p [[buffer(4)]], constant float *f [[buffer(5)]], uint i [[thread_position_in_grid]]) {
-    float total=0; for(uint k=0;k<p[1];++k) total+=dot(a[k],b[k]); out[0]=f[0]*total;
+kernel void inner_complex(device const float2 *a [[buffer(0)]], device const float2 *b [[buffer(1)]],
+                          device float2 *out [[buffer(3)]], constant uint *p [[buffer(4)]], constant float *f [[buffer(5)]],
+                          uint group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float2 partial[inner_width];
+    float2 total = 0;
+    uint index = group * (inner_width * inner_items) + lane;
+    for (uint i = 0; i < inner_items && index < p[1]; ++i, index += inner_width)
+        total += p[2] ? cmul(cconj(a[index]), b[index]) : a[index];
+    inner_group_sum(total, partial, out, group, lane, f[0]);
+}
+
+kernel void inner_complex_real(device const float2 *a [[buffer(0)]], device const float2 *b [[buffer(1)]],
+                               device float *out [[buffer(3)]], constant uint *p [[buffer(4)]], constant float *f [[buffer(5)]],
+                               uint group [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float partial[inner_width];
+    float total = 0;
+    uint index = group * (inner_width * inner_items) + lane;
+    for (uint i = 0; i < inner_items && index < p[1]; ++i, index += inner_width)
+        total += dot(a[index], b[index]);
+    inner_group_sum(total, partial, out, group, lane, f[0]);
 }
 
 kernel void weighted_complex(device const float2 *a [[buffer(0)]], device const float *b [[buffer(1)]], device float2 *out [[buffer(3)]], constant uint *p [[buffer(4)]], uint i [[thread_position_in_grid]]) { out[i]=a[i]*b[p[1]]; }
