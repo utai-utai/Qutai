@@ -1,5 +1,6 @@
 """Apple 实卡行为验证；其他平台跳过 GPU 用例，CPU 导入仍可单独检查。"""
 
+import ctypes as ct
 import subprocess
 import sys
 import unittest
@@ -84,6 +85,27 @@ class AppleTests(unittest.TestCase):
         self.assertEqual(model.layers[0].running_var.dtype, 'float64')
         for parameter in parameters:
             self.assertEqual((parameter.dtype, parameter.grad.dtype, optimizer.averages[parameter].dtype), ('float64', 'float64', 'float64'))
+
+    def test_host_upload_releases_native_buffer_inside_outer_pool(self):
+        # 观察原生 MTLBuffer 的弱引用，长寿命宿主线程的池保持打开。
+        objc = ct.CDLL('/usr/lib/libobjc.A.dylib')
+        pointer = ct.c_void_p
+        objc.objc_autoreleasePoolPush.restype = pointer
+        objc.objc_autoreleasePoolPop.argtypes = [pointer]
+        objc.objc_autoreleasePoolPop.restype = None
+        objc.objc_storeWeak.argtypes = [ct.POINTER(pointer), pointer]
+        objc.objc_storeWeak.restype = pointer
+        objc.objc_loadWeak.argtypes = [ct.POINTER(pointer)]
+        objc.objc_loadWeak.restype = pointer
+
+        pool = objc.objc_autoreleasePoolPush()
+        self.addCleanup(objc.objc_autoreleasePoolPop, pool)
+        storage = apple.storage([1.0])
+        weak = ct.byref(pointer())
+        self.assertEqual(objc.objc_storeWeak(weak, storage._buffer), storage._buffer)
+        self.addCleanup(objc.objc_storeWeak, weak, None)
+        del storage
+        self.assertIsNone(objc.objc_loadWeak(weak))
 
     def test_storage_copy_cast_and_sync(self):
         x = Tensor([0.1, 2, 3], requires_grad=True)

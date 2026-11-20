@@ -73,7 +73,10 @@ void q_free(void *buffer) {
 }
 
 void q_write(void *buffer, const void *source, uint64_t bytes) {
-    if (bytes) std::memcpy([(__bridge id<MTLBuffer>)buffer contents], source, bytes);
+    // contents 返回内部指针，ARC 会延长 buffer 的生命周期至当前自动释放池排空。
+    @autoreleasepool {
+        if (bytes) std::memcpy([(__bridge id<MTLBuffer>)buffer contents], source, bytes);
+    }
 }
 
 int q_read(void *buffer, void *target, uint64_t bytes) {
